@@ -4,98 +4,79 @@
 //  Created by MJ (Ruit) on 4/19/20.
 //
 
-#include "MemoryBackup.hpp"
-#include "KittyUtils.hpp"
+#include <Includes/obfuscate.h>
+#include "MemoryBackup.h"
 
 
-MemoryBackup::MemoryBackup()
-{
+MemoryBackup::MemoryBackup() {
   _address = 0;
-  _size = 0;
+  _size    = 0;
   _orig_code.clear();
 }
 
-MemoryBackup::~MemoryBackup()
-{
-  // clean up
-  _orig_code.clear();
-  _orig_code.shrink_to_fit();
-}
+MemoryBackup::MemoryBackup(const char *libraryName, uintptr_t address, size_t backup_size, bool useMapCache) {
+  MemoryBackup();
 
+  if (libraryName == NULL || address == 0 || backup_size < 1)
+    return;
 
-MemoryBackup MemoryBackup::createBackup(uintptr_t absolute_address, size_t backup_size)
-{
-  MemoryBackup backup;
+  _address = KittyMemory::getAbsoluteAddress(libraryName, address, useMapCache);
+  if(_address == 0) return;
+  
+  _size = backup_size;
 
-  if (!absolute_address || !backup_size) return backup;
-
-  backup._address = absolute_address;
-
-  backup._size = backup_size;
-
-  backup._orig_code.resize(backup_size);
+  _orig_code.resize(backup_size);
 
   // backup current content
-  KittyMemory::memRead(reinterpret_cast<const void *>(backup._address), &backup._orig_code[0], backup_size);
-
-  return backup;
+  KittyMemory::memRead(&_orig_code[0], reinterpret_cast<const void *>(_address), backup_size);
 }
 
-#ifdef __ANDROID__
-MemoryBackup MemoryBackup::createBackup(const KittyMemory::ProcMap &map, uintptr_t address, size_t backup_size)
-{
-  if (!map.isValid() || !address || !backup_size)
-    return MemoryBackup();
 
-  return createBackup(map.startAddress + address, backup_size);
-}
+MemoryBackup::MemoryBackup(uintptr_t absolute_address, size_t backup_size) {
+  MemoryBackup();
 
-#elif __APPLE__
-MemoryBackup MemoryBackup::createBackup(const char *fileName, uintptr_t address, size_t backup_size)
-{
-  if (!address || !backup_size)
-    return MemoryBackup();
+  if (absolute_address == 0 || backup_size < 1)
+    return;
 
-  return createBackup(KittyMemory::getAbsoluteAddress(fileName, address), backup_size);
-}
-#endif
-
-bool MemoryBackup::isValid() const
-{
-  return (_address != 0 && _size > 0 && _orig_code.size() == _size);
-}
-
-size_t MemoryBackup::get_BackupSize() const
-{
-  return _size;
-}
-
-uintptr_t MemoryBackup::get_TargetAddress() const
-{
-  return _address;
-}
-
-bool MemoryBackup::Restore()
-{
-  if (!isValid()) return false;
-
-#ifdef __ANDROID__
-  return KittyMemory::memWrite(reinterpret_cast<void *>(_address), &_orig_code[0], _size);
-#elif __APPLE__
-  return KittyMemory::memWrite(reinterpret_cast<void *>(_address), &_orig_code[0], _size) == KittyMemory::KMS_SUCCESS;
-#endif
-}
-
-std::string MemoryBackup::get_CurrBytes() const
-{
-  if (!isValid()) return "";
+  _address = absolute_address;
   
-  return KittyUtils::data2Hex(reinterpret_cast<const void *>(_address), _size);
+  _size = backup_size;
+
+  _orig_code.resize(backup_size);
+
+  // backup current content
+  KittyMemory::memRead(&_orig_code[0], reinterpret_cast<const void *>(_address), backup_size);
 }
 
-std::string MemoryBackup::get_OrigBytes() const
-{
-  if (!isValid()) return "";
-  
-  return KittyUtils::data2Hex(_orig_code.data(), _orig_code.size());
-}
+   MemoryBackup::~MemoryBackup() {
+     // clean up
+     _orig_code.clear();
+   }
+
+
+  bool MemoryBackup::isValid() const {
+    return (_address != 0 && _size > 0
+            && _orig_code.size() == _size);
+  }
+
+  size_t MemoryBackup::get_BackupSize() const{
+    return _size;
+  }
+
+  uintptr_t MemoryBackup::get_TargetAddress() const{
+    return _address;
+  }
+
+  bool MemoryBackup::Restore() {
+    if (!isValid()) return false;
+    return KittyMemory::memWrite(reinterpret_cast<void *>(_address), &_orig_code[0], _size) == Memory_Status::SUCCESS;
+  }
+
+  std::string MemoryBackup::get_CurrBytes() {
+    if (!isValid()) 
+      _hexString = std::string(OBFUSCATE("0xInvalid"));
+      else 
+      _hexString = KittyMemory::read2HexStr(reinterpret_cast<const void *>(_address), _size);
+
+    return _hexString;
+  }
