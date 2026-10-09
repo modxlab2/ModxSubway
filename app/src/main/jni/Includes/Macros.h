@@ -2,6 +2,14 @@
 #ifndef ANDROID_MOD_MENU_MACROS_H
 #define ANDROID_MOD_MENU_MACROS_H
 
+// ================================================================
+// ★ FIX: MemoryPatch যেন সবসময় available থাকে
+//   (Main.cpp আগে Macros.h include করে, পরে MemoryPatch.h)
+// ================================================================
+#include "KittyMemory/MemoryPatch.h"
+#include <vector>
+#include <algorithm>
+
 #if defined(__aarch64__) //Compile for arm64 lib only
 #include <And64InlineHook/And64InlineHook.hpp>
 
