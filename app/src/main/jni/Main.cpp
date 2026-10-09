@@ -2,17 +2,9 @@
 // ModX Lab — Subway Surfers (Unity / IL2CPP)
 // Auto-Update Hook System  (32bit + 64bit)
 // ----------------------------------------------------------------
-// সব offset runtime-এ il2cpp metadata থেকে resolve হয়
-// (LoadClass + GetMethodOffsetByName)। গেম আপডেট হলেও,
-// offset বদলালেও hook কাজ করবে — এটাই "auto update"।
-//
-// ★ সব hook function এ null guard — crash-proof
-// ★ armeabi-v7a + arm64-v8a — দুটোতেই কাজ করবে
-// ★ Main tab এ 4টি Mode Button:
-//     800 = Simple Mode
-//     801 = Max Mode
-//     802 = Ultra Max Mode
-//     803 = None (Reset)
+// ★ Null-guarded hooks — crash-proof
+// ★ 4টি Slider (Jump Limit / Jump Height / Power Duration / Score Multiplier)
+// ★ User-friendly feature names
 // ================================================================
 
 #include "Includes.h"
@@ -27,19 +19,22 @@
 #define LIB OBFUSCATE("libil2cpp.so")
 
 // ================================================================
-//                        FEATURE FLAGS
+//   FEATURE STATE
+// ----------------------------------------------------------------
+//   Booleans  → ON/OFF features
+//   Integers  → slider features (0 = off / use game default)
 // ================================================================
-static std::atomic<bool> g_FrontalImpact    {false};
-static std::atomic<bool> g_SideImpact       {false};
-static std::atomic<bool> g_JumpLimit        {false};
-static std::atomic<bool> g_JumpHeight       {false};
-static std::atomic<bool> g_AutoRevive       {false};
-static std::atomic<bool> g_PowerDuration    {false};
-static std::atomic<bool> g_LaneChangeDur    {false};
-static std::atomic<bool> g_ScoreMultiplier  {false};
-static std::atomic<bool> g_DetectCollisions {false};
-static std::atomic<bool> g_IsIAP            {false};
-static std::atomic<bool> g_UnlimitedCoin    {false};
+static std::atomic<bool> g_FrontalImpact    {false};   // 100
+static std::atomic<bool> g_SideImpact       {false};   // 101
+static std::atomic<int>  g_JumpLimit        {0};       // 102 (0-999)
+static std::atomic<int>  g_JumpHeight       {0};       // 103 (0-200)
+static std::atomic<bool> g_AutoRevive       {false};   // 104
+static std::atomic<int>  g_PowerDuration    {0};       // 105 (0-999)
+static std::atomic<bool> g_FastLaneChange   {false};   // 106
+static std::atomic<int>  g_ScoreMultiplier  {0};       // 107 (0-999)
+static std::atomic<bool> g_NoCollision      {false};   // 108
+static std::atomic<bool> g_FreeShopping     {false};   // 109
+static std::atomic<bool> g_UnlimitedCoins   {false};   // 110
 
 // ================================================================
 //                     ORIGINAL FUNCTION POINTERS
@@ -63,75 +58,79 @@ static int   (*old_GetCurrency)(...)            = nullptr;
 
 // --- SYBO.RunnerCore.Character.CharacterMotor ---
 static bool new_CheckFrontalImpact(void* self, void* other) {
-    if (!self) return false;                                // ★ NULL GUARD
+    if (!self) return false;
     if (g_FrontalImpact.load()) return false;
     return old_CheckFrontalImpact ? old_CheckFrontalImpact(self, other) : false;
 }
 
 static bool new_CheckSideImpact(void* self, void* other) {
-    if (!self) return false;                                // ★ NULL GUARD
+    if (!self) return false;
     if (g_SideImpact.load()) return false;
     return old_CheckSideImpact ? old_CheckSideImpact(self, other) : false;
 }
 
 // --- SYBO.RunnerCore.Character.CharacterMotorAbilities ---
 static int new_get_JumpLimit(void* self) {
-    if (!self) return 0;                                    // ★ NULL GUARD
-    if (g_JumpLimit.load()) return 999;
+    if (!self) return 0;
+    int v = g_JumpLimit.load();
+    if (v > 0) return v;                              // slider override
     return old_get_JumpLimit ? old_get_JumpLimit(self) : 0;
 }
 
 static float new_get_JumpHeight(void* self) {
-    if (!self) return 0.0f;                                 // ★ NULL GUARD
-    if (g_JumpHeight.load()) return 35.0f;
+    if (!self) return 0.0f;
+    int v = g_JumpHeight.load();
+    if (v > 0) return (float) v;                      // slider override
     return old_get_JumpHeight ? old_get_JumpHeight(self) : 0.0f;
 }
 
 static float new_get_LaneChangeDuration(void* self) {
-    if (!self) return 0.0f;                                 // ★ NULL GUARD
-    if (g_LaneChangeDur.load()) return 0.0f;
+    if (!self) return 0.0f;
+    if (g_FastLaneChange.load()) return 0.0f;
     return old_get_LaneChangeDuration ? old_get_LaneChangeDuration(self) : 0.0f;
 }
 
 // --- SYBO.Subway.StumbleBehaviour ---
 static bool new_IsAutoReviveEnabled(void* self) {
-    if (!self) return false;                                // ★ NULL GUARD
+    if (!self) return false;
     if (g_AutoRevive.load()) return true;
     return old_IsAutoReviveEnabled ? old_IsAutoReviveEnabled(self) : false;
 }
 
 // --- SYBO.RunnerCore.Powers.PowerConfig ---
 static float new_GetDuration(void* self, void* cfg) {
-    if (!self) return 0.0f;                                 // ★ NULL GUARD
-    if (g_PowerDuration.load()) return 999.0f;
+    if (!self) return 0.0f;
+    int v = g_PowerDuration.load();
+    if (v > 0) return (float) v;                      // slider override
     return old_GetDuration ? old_GetDuration(self, cfg) : 0.0f;
 }
 
 // --- SYBO.Subway.ScoreMultiplierManager ---
 static int new_get_BaseMultiplierSum(void* self) {
-    if (!self) return 0;                                    // ★ NULL GUARD
-    if (g_ScoreMultiplier.load()) return 999999;
+    if (!self) return 0;
+    int v = g_ScoreMultiplier.load();
+    if (v > 0) return v;                              // slider override
     return old_get_BaseMultiplierSum ? old_get_BaseMultiplierSum(self) : 0;
 }
 
 // --- UnityEngine.CharacterController ---
 static bool new_get_detectCollisions(void* self) {
-    if (!self) return true;                                 // ★ NULL GUARD
-    if (g_DetectCollisions.load()) return false;
+    if (!self) return true;
+    if (g_NoCollision.load()) return false;
     return old_get_detectCollisions ? old_get_detectCollisions(self) : true;
 }
 
 // --- SYBO.Subway.Core.CommonData.Currency ---
 static bool new_get_IsIAP(void* self) {
-    if (!self) return false;                                // ★ NULL GUARD
-    if (g_IsIAP.load()) return false;
+    if (!self) return false;
+    if (g_FreeShopping.load()) return false;
     return old_get_IsIAP ? old_get_IsIAP(self) : false;
 }
 
 // --- SYBO.Subway.Core.ProfileData.WalletModel ---
 static int new_GetCurrency(void* self, int currencyType) {
-    if (!self) return 0;                                    // ★ NULL GUARD
-    if (g_UnlimitedCoin.load()) return 99999999;
+    if (!self) return 0;
+    if (g_UnlimitedCoins.load()) return 99999999;
     return old_GetCurrency ? old_GetCurrency(self, currencyType) : 0;
 }
 
@@ -139,14 +138,11 @@ static int new_GetCurrency(void* self, int currencyType) {
 //                       HACK THREAD
 // ================================================================
 void* hack_thread(void*) {
-    // Step 1 — libil2cpp.so লোড হওয়ার অপেক্ষা
     do {
         sleep(1);
     } while (!isLibraryLoaded(LIB));
 
-    // Step 2 — il2cpp fully initialize হওয়ার জন্য buffer
-    sleep(3);
-
+    sleep(3);   // il2cpp init buffer
     LOGD(OBFUSCATE("il2cpp loaded — installing auto-update hooks"));
 
     // ------------------------------------------------------------
@@ -177,9 +173,9 @@ void* hack_thread(void*) {
             DWORD oJumpLim = CMA->GetMethodOffsetByName(OBFUSCATE("get_JumpLimit"), 0);
             DWORD oJumpH   = CMA->GetMethodOffsetByName(OBFUSCATE("get_JumpHeight"), 0);
             DWORD oLane    = CMA->GetMethodOffsetByName(OBFUSCATE("get_LaneChangeDuration"), 0);
-            if (oJumpLim) HOOK_AU((void*)oJumpLim, (void*)new_get_JumpLimit,           old_get_JumpLimit);
-            if (oJumpH)   HOOK_AU((void*)oJumpH,   (void*)new_get_JumpHeight,          old_get_JumpHeight);
-            if (oLane)    HOOK_AU((void*)oLane,    (void*)new_get_LaneChangeDuration,  old_get_LaneChangeDuration);
+            if (oJumpLim) HOOK_AU((void*)oJumpLim, (void*)new_get_JumpLimit,          old_get_JumpLimit);
+            if (oJumpH)   HOOK_AU((void*)oJumpH,   (void*)new_get_JumpHeight,         old_get_JumpHeight);
+            if (oLane)    HOOK_AU((void*)oLane,    (void*)new_get_LaneChangeDuration, old_get_LaneChangeDuration);
             LOGD(OBFUSCATE("Abilities hooks: jl=%p jh=%p lc=%p"),
                  (void*)oJumpLim, (void*)oJumpH, (void*)oLane);
         } else {
@@ -283,54 +279,63 @@ void* hack_thread(void*) {
 
 // ================================================================
 //                      JNI — FEATURE LIST
-// ----------------------------------------------------------------
-//  ★ Main tab এ 4টি ButtonOnOff (Simple / Max / Ultra Max / None)
-//  ★ তারপর প্রতিটি Category (Runner / Powers / Score / ...)
 // ================================================================
 jobjectArray GetFeatureList(JNIEnv* env, jobject) {
     jobjectArray ret;
     const char* features[] = {
 
         // ========================================================
-        //  MAIN TAB — Mode Presets (ButtonOnOff)
+        //  MAIN TAB — Mode Presets
         // ========================================================
         OBFUSCATE("800_ButtonOnOff_Simple Mode"),
         OBFUSCATE("801_ButtonOnOff_Max Mode"),
         OBFUSCATE("802_ButtonOnOff_Ultra Max Mode"),
         OBFUSCATE("803_ButtonOnOff_None (Reset)"),
 
-        OBFUSCATE("SmallTextView_<b><font color='#3DDB87'>Simple:</font></b> No Frontal/Side Impact, Auto Revive, Unlimited Coins"),
-        OBFUSCATE("SmallTextView_<b><font color='#3DDB87'>Max:</font></b> Simple + Jump, Power, Score Multiplier"),
-        OBFUSCATE("SmallTextView_<b><font color='#3DDB87'>Ultra:</font></b> Max + No Collision, Free IAP"),
-        OBFUSCATE("SmallTextView_<b><font color='#FFBB33'>None:</font></b> Reset all features to OFF"),
+        OBFUSCATE("SmallTextView_<b><font color='#3DDB87'>Simple:</font></b> Basic Safety + Coins"),
+        OBFUSCATE("SmallTextView_<b><font color='#3DDB87'>Max:</font></b> Simple + Jump, Power, Score"),
+        OBFUSCATE("SmallTextView_<b><font color='#3DDB87'>Ultra:</font></b> Max + No Collision, Free Shop"),
+        OBFUSCATE("SmallTextView_<b><font color='#FFBB33'>None:</font></b> Reset all features"),
 
         // ========================================================
-        //  CATEGORIES
+        //  Runner — Movement & Survival
         // ========================================================
         OBFUSCATE("Category_Runner"),
 
-        OBFUSCATE("100_Toggle_No Frontal Impact"),
-        OBFUSCATE("101_Toggle_No Side Impact"),
-        OBFUSCATE("102_Toggle_Infinite Jump Limit"),
-        OBFUSCATE("103_Toggle_High Jump Height"),
+        OBFUSCATE("100_Toggle_No Head-On Collision"),
+        OBFUSCATE("101_Toggle_No Side Collision"),
+        OBFUSCATE("102_SeekBar_Jump Limit_0_999"),
+        OBFUSCATE("103_SeekBar_Jump Height_0_200"),
         OBFUSCATE("104_Toggle_Auto Revive"),
 
+        // ========================================================
+        //  Powers — Power-up related
+        // ========================================================
         OBFUSCATE("Category_Powers"),
 
-        OBFUSCATE("105_Toggle_Long Power Duration"),
-        OBFUSCATE("106_Toggle_Instant Lane Change"),
+        OBFUSCATE("105_SeekBar_Power Duration_0_999"),
+        OBFUSCATE("106_Toggle_Fast Lane Change"),
 
+        // ========================================================
+        //  Score — Score boosting
+        // ========================================================
         OBFUSCATE("Category_Score"),
 
-        OBFUSCATE("107_Toggle_Score Multiplier x999999"),
+        OBFUSCATE("107_SeekBar_Score Multiplier_0_999"),
 
+        // ========================================================
+        //  Collisions — Physics
+        // ========================================================
         OBFUSCATE("Category_Collisions"),
 
         OBFUSCATE("108_Toggle_No Collision Detect"),
 
+        // ========================================================
+        //  Shop — Currency / IAP
+        // ========================================================
         OBFUSCATE("Category_Shop"),
 
-        OBFUSCATE("109_Toggle_Free IAP (Ignore Purchases)"),
+        OBFUSCATE("109_Toggle_Free Shopping (IAP)"),
         OBFUSCATE("110_Toggle_Unlimited Coins"),
     };
 
@@ -348,9 +353,6 @@ jobjectArray GetFeatureList(JNIEnv* env, jobject) {
 
 // ================================================================
 //                      JNI — CHANGES HANDLER
-// ----------------------------------------------------------------
-//  Mode Buttons (800/801/802/803) সব feature flags কে সেট করে
-//  Toggle-গুলোও (100..110) individual ভাবে কাজ করে
 // ================================================================
 void Changes(JNIEnv*, jclass, jobject,
              jint featNum, jstring, jint value,
@@ -359,132 +361,126 @@ void Changes(JNIEnv*, jclass, jobject,
     switch (featNum) {
 
         // --------------------------------------------------------
-        //  Individual toggles
+        //  Individual features
         // --------------------------------------------------------
         case 100: g_FrontalImpact.store(boolean);     break;
         case 101: g_SideImpact.store(boolean);        break;
-        case 102: g_JumpLimit.store(boolean);         break;
-        case 103: g_JumpHeight.store(boolean);        break;
+        case 102: g_JumpLimit.store(value);           break;   // slider
+        case 103: g_JumpHeight.store(value);          break;   // slider
         case 104: g_AutoRevive.store(boolean);        break;
-        case 105: g_PowerDuration.store(boolean);     break;
-        case 106: g_LaneChangeDur.store(boolean);     break;
-        case 107: g_ScoreMultiplier.store(boolean);   break;
-        case 108: g_DetectCollisions.store(boolean);  break;
-        case 109: g_IsIAP.store(boolean);             break;
-        case 110: g_UnlimitedCoin.store(boolean);     break;
+        case 105: g_PowerDuration.store(value);       break;   // slider
+        case 106: g_FastLaneChange.store(boolean);    break;
+        case 107: g_ScoreMultiplier.store(value);     break;   // slider
+        case 108: g_NoCollision.store(boolean);       break;
+        case 109: g_FreeShopping.store(boolean);      break;
+        case 110: g_UnlimitedCoins.store(boolean);    break;
 
         // --------------------------------------------------------
         //  800 — Simple Mode
-        //     Basic safety + coin boost
         // --------------------------------------------------------
         case 800: {
             if (boolean) {
-                // ---- ON: Basic features ----
+                // Basic safety ON
                 g_FrontalImpact.store(true);
                 g_SideImpact.store(true);
                 g_AutoRevive.store(true);
-                g_UnlimitedCoin.store(true);
-
-                // ---- OFF: Advanced features ----
-                g_JumpLimit.store(false);
-                g_JumpHeight.store(false);
-                g_PowerDuration.store(false);
-                g_LaneChangeDur.store(false);
-                g_ScoreMultiplier.store(false);
-                g_DetectCollisions.store(false);
-                g_IsIAP.store(false);
+                g_UnlimitedCoins.store(true);
+                // Advanced OFF
+                g_JumpLimit.store(0);
+                g_JumpHeight.store(0);
+                g_PowerDuration.store(0);
+                g_FastLaneChange.store(false);
+                g_ScoreMultiplier.store(0);
+                g_NoCollision.store(false);
+                g_FreeShopping.store(false);
             } else {
-                // ---- OFF → reset basic too ----
                 g_FrontalImpact.store(false);
                 g_SideImpact.store(false);
                 g_AutoRevive.store(false);
-                g_UnlimitedCoin.store(false);
+                g_UnlimitedCoins.store(false);
             }
             LOGD(OBFUSCATE("MODE: Simple = %d"), (int)boolean);
         } break;
 
         // --------------------------------------------------------
         //  801 — Max Mode
-        //     Simple + gameplay boost (no risky features)
         // --------------------------------------------------------
         case 801: {
             if (boolean) {
-                // ---- ON: All main gameplay ----
+                // All main features ON
                 g_FrontalImpact.store(true);
                 g_SideImpact.store(true);
-                g_JumpLimit.store(true);
-                g_JumpHeight.store(true);
                 g_AutoRevive.store(true);
-                g_PowerDuration.store(true);
-                g_LaneChangeDur.store(true);
-                g_ScoreMultiplier.store(true);
-                g_UnlimitedCoin.store(true);
-
-                // ---- OFF: Risky features ----
-                g_DetectCollisions.store(false);
-                g_IsIAP.store(false);
+                g_FastLaneChange.store(true);
+                g_UnlimitedCoins.store(true);
+                // Sliders set to sensible defaults
+                g_JumpLimit.store(100);
+                g_JumpHeight.store(50);
+                g_PowerDuration.store(100);
+                g_ScoreMultiplier.store(10);
+                // Risky features OFF
+                g_NoCollision.store(false);
+                g_FreeShopping.store(false);
             } else {
-                // ---- OFF: Advanced gameplay off (keep basic) ----
-                g_JumpLimit.store(false);
-                g_JumpHeight.store(false);
-                g_PowerDuration.store(false);
-                g_LaneChangeDur.store(false);
-                g_ScoreMultiplier.store(false);
+                // Only advanced sliders OFF
+                g_JumpLimit.store(0);
+                g_JumpHeight.store(0);
+                g_PowerDuration.store(0);
+                g_FastLaneChange.store(false);
+                g_ScoreMultiplier.store(0);
             }
             LOGD(OBFUSCATE("MODE: Max = %d"), (int)boolean);
         } break;
 
         // --------------------------------------------------------
         //  802 — Ultra Max Mode
-        //     Everything ON
         // --------------------------------------------------------
         case 802: {
             if (boolean) {
-                // ---- ON: ALL features ----
+                // EVERYTHING ON at max values
                 g_FrontalImpact.store(true);
                 g_SideImpact.store(true);
-                g_JumpLimit.store(true);
-                g_JumpHeight.store(true);
                 g_AutoRevive.store(true);
-                g_PowerDuration.store(true);
-                g_LaneChangeDur.store(true);
-                g_ScoreMultiplier.store(true);
-                g_DetectCollisions.store(true);
-                g_IsIAP.store(true);
-                g_UnlimitedCoin.store(true);
+                g_FastLaneChange.store(true);
+                g_UnlimitedCoins.store(true);
+                g_NoCollision.store(true);
+                g_FreeShopping.store(true);
+                g_JumpLimit.store(999);
+                g_JumpHeight.store(200);
+                g_PowerDuration.store(999);
+                g_ScoreMultiplier.store(999);
             } else {
-                // ---- OFF: ALL features ----
+                // Everything OFF
                 g_FrontalImpact.store(false);
                 g_SideImpact.store(false);
-                g_JumpLimit.store(false);
-                g_JumpHeight.store(false);
                 g_AutoRevive.store(false);
-                g_PowerDuration.store(false);
-                g_LaneChangeDur.store(false);
-                g_ScoreMultiplier.store(false);
-                g_DetectCollisions.store(false);
-                g_IsIAP.store(false);
-                g_UnlimitedCoin.store(false);
+                g_FastLaneChange.store(false);
+                g_UnlimitedCoins.store(false);
+                g_NoCollision.store(false);
+                g_FreeShopping.store(false);
+                g_JumpLimit.store(0);
+                g_JumpHeight.store(0);
+                g_PowerDuration.store(0);
+                g_ScoreMultiplier.store(0);
             }
             LOGD(OBFUSCATE("MODE: UltraMax = %d"), (int)boolean);
         } break;
 
         // --------------------------------------------------------
-        //  803 — None (Reset all)
+        //  803 — None (Reset)
         // --------------------------------------------------------
         case 803: {
-            // ---- ALL features OFF ----
             g_FrontalImpact.store(false);
             g_SideImpact.store(false);
-            g_JumpLimit.store(false);
-            g_JumpHeight.store(false);
             g_AutoRevive.store(false);
-            g_PowerDuration.store(false);
-            g_LaneChangeDur.store(false);
-            g_ScoreMultiplier.store(false);
-            g_DetectCollisions.store(false);
-            g_IsIAP.store(false);
-            g_UnlimitedCoin.store(false);
+            g_FastLaneChange.store(false);
+            g_UnlimitedCoins.store(false);
+            g_NoCollision.store(false);
+            g_FreeShopping.store(false);
+            g_JumpLimit.store(0);
+            g_JumpHeight.store(0);
+            g_PowerDuration.store(0);
+            g_ScoreMultiplier.store(0);
             LOGD(OBFUSCATE("MODE: None = %d"), (int)boolean);
         } break;
 
@@ -495,7 +491,6 @@ void Changes(JNIEnv*, jclass, jobject,
 
 // ================================================================
 //     STUBS — Menu.java যাতে UnsatisfiedLinkError না দেয়
-//     (ESP / Teleport non-unity code সরানোর কারণে)
 // ================================================================
 extern "C" JNIEXPORT void JNICALL
 Java_com_android_support_Menu_Draw(JNIEnv*, jclass, jobject, jobject) { }
@@ -513,7 +508,7 @@ extern "C" JNIEXPORT void JNICALL
 Java_com_android_support_Main_setNativeCrashDir(JNIEnv*, jclass, jstring) { }
 
 // ================================================================
-//                     CONSTRUCTOR (entry)
+//                     CONSTRUCTOR
 // ================================================================
 __attribute__((constructor))
 void lib_main() {
