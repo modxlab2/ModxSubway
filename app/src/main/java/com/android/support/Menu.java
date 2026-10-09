@@ -100,7 +100,7 @@ int COLOR_ACCENT      = Color.parseColor("#3DDB87");
 int COLOR_ACCENT_2    = Color.parseColor("#2BB673");
 int COLOR_ACCENT_3    = Color.parseColor("#6EE7A9");
 int COLOR_SUCCESS     = Color.parseColor("#4FBA82");
-int COLOR_DANGER      = Color.parseColor("#C25C56");
+int COLOR_DANGER      = Color.parseColor("#EF4444");
 
 // ==== FIXED GREEN GLOW (both menus) ====
 final int GLOW_COLOR_1 = Color.parseColor("#3DDB87");
@@ -249,13 +249,9 @@ private boolean isLoggedIn = false;
 
 private View sidebarDivider = null;
 private int effectivePosY = POS_Y;
-private static final HashMap<Integer, Integer> SEEK_DEFAULTS = new HashMap<Integer, Integer>();
-    static {
-        SEEK_DEFAULTS.put(106, 3);     // Line Thickness default 3
-        SEEK_DEFAULTS.put(107, 115);   // Box Size default 115
-    }
+    private static final HashMap<Integer, Integer> SEEK_DEFAULTS = new HashMap<Integer, Integer>();
+    // (empty — no defaults needed for current features)
     
-
     native void Init(Context context, TextView title, TextView subTitle);
     native String Icon();
     native String IconWebViewData();
@@ -567,7 +563,7 @@ hideBtn.setTextColor(lighten(COLOR_DANGER, 0.45f));   // ← softer red text
 
         Button closeBtn = new Button(context);
         closeBtn.setLayoutParams(new LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT));
-        closeBtn.setBackground(cardBg(withAlpha(COLOR_ACCENT, 0x1A), withAlpha(COLOR_ACCENT, 0x77), 10));
+        closeBtn.setBackground(cardBg(withAlpha(COLOR_ACCENT, 0x1A), withAlpha(COLOR_ACCENT, 0x77), 6));
         closeBtn.setText("MINIMIZE");
         closeBtn.setAllCaps(false);
         closeBtn.setTextColor(COLOR_ACCENT);
@@ -1748,23 +1744,26 @@ new Titanic().start(proTitle);
         // ================================================================
     // Telegram paper-plane icon
     // ================================================================
-    private static class TelegramIcon extends Drawable {
+        private static class TelegramIcon extends Drawable {
         private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final Path path = new Path();
+        private final int sizePx;
 
-        TelegramIcon(int color) {
+        TelegramIcon(int color, float density) {
             paint.setColor(color);
             paint.setStyle(Paint.Style.FILL);
+            this.sizePx = (int) (18 * density);   // 18dp icon
         }
+
+        @Override public int getIntrinsicWidth()  { return sizePx; }
+        @Override public int getIntrinsicHeight() { return sizePx; }
 
         @Override
         public void draw(Canvas canvas) {
             Rect b = getBounds();
             if (b.width() <= 0 || b.height() <= 0) return;
 
-            // Force a reasonable icon size (18dp looks good next to text)
             float size = Math.min(b.width(), b.height());
-            if (size < 36f) size = 36f;      // in px, ~12dp @ 3x density
             float s = size / 24f;
 
             canvas.save();
@@ -1772,24 +1771,22 @@ new Titanic().start(proTitle);
                              b.top + (b.height() - size) / 2f);
             canvas.scale(s, s);
 
-            // Telegram paper-plane (simplified official glyph)
+            // Telegram paper-plane
             path.reset();
-            // Outer triangle body
-            path.moveTo(22.0f, 3.0f);        // top-right tip
-            path.lineTo(2.0f, 11.5f);        // left tail
-            path.lineTo(9.5f, 14.0f);        // mid bottom-left
-            path.lineTo(11.5f, 20.0f);       // bottom point
-            path.lineTo(14.5f, 15.0f);       // inner point
-            path.lineTo(21.0f, 19.5f);       // right bottom corner
+            path.moveTo(22.0f, 3.0f);
+            path.lineTo(2.0f, 11.5f);
+            path.lineTo(9.5f, 14.0f);
+            path.lineTo(11.5f, 20.0f);
+            path.lineTo(14.5f, 15.0f);
+            path.lineTo(21.0f, 19.5f);
             path.close();
             canvas.drawPath(path, paint);
 
-            // Inner fold line (darker accent — cutout illusion via stroke)
-                        // Inner fold line — subtle darker overlay (safe, no CLEAR mode)
+            // Fold line — subtle darker overlay (safe)
             Paint strokeP = new Paint(Paint.ANTI_ALIAS_FLAG);
             strokeP.setStyle(Paint.Style.STROKE);
             strokeP.setStrokeWidth(1.2f);
-            strokeP.setColor(0x33000000);   // semi-transparent black
+            strokeP.setColor(0x33000000);
             path.reset();
             path.moveTo(9.5f, 14.0f);
             path.lineTo(21.0f, 6.5f);
@@ -2749,7 +2746,7 @@ Toast.makeText(getContext, "Color: " + cname, Toast.LENGTH_SHORT).show();
 
     private void applyColorButton(Button button, String featName, int color) {
         GradientDrawable bg = new GradientDrawable();
-        bg.setCornerRadius(dp(12));
+        bg.setCornerRadius(dp(6));
         bg.setColor(color);
         bg.setStroke(dp(2), withAlpha(0xFFFFFF, 0xB0));
         button.setBackground(bg);
@@ -3020,7 +3017,7 @@ private Button makeMenuColorButton(final int color, final String label,
 
 private void applyMenuColorButtonStyle(Button button, String label, int color) {
     GradientDrawable bg = new GradientDrawable();
-    bg.setCornerRadius(dp(12));
+    bg.setCornerRadius(dp(6));
     bg.setColor(color);
     bg.setStroke(dp(2), withAlpha(0xFFFFFF, 0xB0));
     button.setBackground(bg);
@@ -3155,7 +3152,8 @@ private void applyMenuColorButtonStyle(Button button, String label, int color) {
         button.setBackground(bg);
 
         // Telegram paper-plane icon (left of text)
-        TelegramIcon icon = new TelegramIcon(Color.WHITE);
+        float density = getContext().getResources().getDisplayMetrics().density;
+        TelegramIcon icon = new TelegramIcon(Color.WHITE, density);
         button.setCompoundDrawablesWithIntrinsicBounds(icon, null, null, null);
         button.setCompoundDrawablePadding(dp(8));
 
@@ -3802,7 +3800,7 @@ private void updateHeaderColors() {
     if (mHideBtn != null) {
         mHideBtn.setBackground(cardBg(
                 withAlpha(COLOR_DANGER, 0x1A),
-                withAlpha(COLOR_DANGER, 0x77), 10));
+                withAlpha(COLOR_DANGER, 0x77), 6));
         mHideBtn.setTextColor(lighten(COLOR_DANGER, 0.45f));
     }
 
@@ -4003,7 +4001,7 @@ private void showMenuColorPickerDialog() {
     GradientDrawable boxBg = new GradientDrawable(
             GradientDrawable.Orientation.TOP_BOTTOM,
             new int[]{COLOR_BG_TOP, COLOR_BG_BOTTOM});
-    boxBg.setCornerRadius(dp(20));
+        boxBg.setCornerRadius(dp(10));
     boxBg.setStroke(dp(1), withAlpha(COLOR_ACCENT, 0xAA));
     box.setBackground(boxBg);
 
