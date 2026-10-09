@@ -3152,7 +3152,7 @@ private void applyMenuColorButtonStyle(Button button, String label, int color) {
         button.setBackground(bg);
 
         // Telegram paper-plane icon (left of text)
-        float density = getContext().getResources().getDisplayMetrics().density;
+                float density = getContext.getResources().getDisplayMetrics().density;
         TelegramIcon icon = new TelegramIcon(Color.WHITE, density);
         button.setCompoundDrawablesWithIntrinsicBounds(icon, null, null, null);
         button.setCompoundDrawablePadding(dp(8));
