@@ -142,7 +142,7 @@ String NumberTxtColor = "#3DDB87";
     private static final int   POS_Y       = 100;
     private static final int   MENU_WIDTH  = 272;
     private static final int   MENU_HEIGHT = 352;
-    private static final float MENU_CORNER = 20f;
+    private static final float MENU_CORNER = 10f;
     private static final float ICON_SIZE   = 50f;
     private static final float ICON_ALPHA  = 1f;
 
@@ -1744,6 +1744,64 @@ new Titanic().start(proTitle);
             return false;
         }
     };
+    
+        // ================================================================
+    // Telegram paper-plane icon
+    // ================================================================
+    private static class TelegramIcon extends Drawable {
+        private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Path path = new Path();
+
+        TelegramIcon(int color) {
+            paint.setColor(color);
+            paint.setStyle(Paint.Style.FILL);
+        }
+
+        @Override
+        public void draw(Canvas canvas) {
+            Rect b = getBounds();
+            if (b.width() <= 0 || b.height() <= 0) return;
+
+            // Force a reasonable icon size (18dp looks good next to text)
+            float size = Math.min(b.width(), b.height());
+            if (size < 36f) size = 36f;      // in px, ~12dp @ 3x density
+            float s = size / 24f;
+
+            canvas.save();
+            canvas.translate(b.left + (b.width() - size) / 2f,
+                             b.top + (b.height() - size) / 2f);
+            canvas.scale(s, s);
+
+            // Telegram paper-plane (simplified official glyph)
+            path.reset();
+            // Outer triangle body
+            path.moveTo(22.0f, 3.0f);        // top-right tip
+            path.lineTo(2.0f, 11.5f);        // left tail
+            path.lineTo(9.5f, 14.0f);        // mid bottom-left
+            path.lineTo(11.5f, 20.0f);       // bottom point
+            path.lineTo(14.5f, 15.0f);       // inner point
+            path.lineTo(21.0f, 19.5f);       // right bottom corner
+            path.close();
+            canvas.drawPath(path, paint);
+
+            // Inner fold line (darker accent — cutout illusion via stroke)
+                        // Inner fold line — subtle darker overlay (safe, no CLEAR mode)
+            Paint strokeP = new Paint(Paint.ANTI_ALIAS_FLAG);
+            strokeP.setStyle(Paint.Style.STROKE);
+            strokeP.setStrokeWidth(1.2f);
+            strokeP.setColor(0x33000000);   // semi-transparent black
+            path.reset();
+            path.moveTo(9.5f, 14.0f);
+            path.lineTo(21.0f, 6.5f);
+            canvas.drawPath(path, strokeP);
+
+            canvas.restore();
+        }
+
+        @Override public void setAlpha(int alpha) { paint.setAlpha(alpha); }
+        @Override public void setColorFilter(ColorFilter cf) { paint.setColorFilter(cf); }
+        @Override public int getOpacity() { return PixelFormat.TRANSLUCENT; }
+    }
 
     // ================================================================
     // Responsive layout: text / padding scale + sidebar width + compact tabs
@@ -1984,22 +2042,27 @@ if (!categoryNames.contains("Settings")) {
     categoryViewsMap.put("Settings", newCategoryLayout());
 }
 
-LinearLayout settingsLay = categoryViewsMap.get("Settings");
-if (settingsLay != null) {
-    settingsLay.removeAllViews();
+    LinearLayout settingsLay = categoryViewsMap.get("Settings");
+    if (settingsLay != null) {
+        settingsLay.removeAllViews();
 
-    Switch(settingsLay, -1, "Save features preference", Preferences.loadPref);
-    
+        Switch(settingsLay, -1, "Save features preference", Preferences.loadPref);
 
-                Category(settingsLay, "Menu Color Theme");
+        Category(settingsLay, "Menu Color Theme");
 
-    // ===== Pick Menu Color (shows current color + hex) =====
-    settingsLay.addView(makeMenuColorButton(
-            COLOR_ACCENT, "Menu Color", -29));
-    settingsLay.addView(makeMenuColorButton(
-            Color.parseColor("#3DDB87"), "Reset to Default", -28));
+        // ===== Pick Menu Color (shows current color + hex) =====
+        settingsLay.addView(makeMenuColorButton(
+                COLOR_ACCENT, "Menu Color", -29));
+        settingsLay.addView(makeMenuColorButton(
+                Color.parseColor("#3DDB87"), "Reset to Default", -28));
 
-    Button(settingsLay, -6, "Close Menu");
+        Category(settingsLay, "Community");
+
+        // ===== Telegram button (sky-blue, paper-plane icon) =====
+        ButtonTelegram(settingsLay, "Join our Telegram",
+                "https://t.me/kayesahmmedpro");
+
+        Button(settingsLay, -6, "Close Menu");
     }
         setupSidebarTabs();
         rescaleAll();
@@ -2083,7 +2146,7 @@ if (settingsLay != null) {
             bg = new GradientDrawable();
             bg.setColor(0x0DFFFFFF);
         }
-        bg.setCornerRadius(dp(10));
+        bg.setCornerRadius(dp(5));
         h.root.setBackground(bg);
         h.label.setTextColor(selected ? Color.WHITE : COLOR_TEXT_MUTED);
         h.label.setTypeface(selected ? fontBold : fontMedium);
@@ -2438,10 +2501,10 @@ public void setTeleportPadVisible(boolean visible) {
         b.setPadding(dp(16), dp(8), dp(16), dp(8));
         if (primary) {
             b.setTextColor(Color.WHITE);
-            b.setBackground(gradBg(BTN_GRAD_1, BTN_GRAD_2, 10));
+            b.setBackground(gradBg(BTN_GRAD_1, BTN_GRAD_2, 8));
         } else {
             b.setTextColor(COLOR_TEXT_MUTED);
-            b.setBackground(cardBg(0x0FFFFFFF, COLOR_CARD_BORDER, 10));
+            b.setBackground(cardBg(0x0FFFFFFF, COLOR_CARD_BORDER, 6));
         }
         flatten(b);
         addPressAnim(b);
@@ -2735,7 +2798,7 @@ Toast.makeText(getContext, "Color: " + cname, Toast.LENGTH_SHORT).show();
     row.setOrientation(LinearLayout.HORIZONTAL);
     row.setGravity(Gravity.CENTER_VERTICAL);
     row.setLayoutParams(rowLp(6, 3, 6, 3));
-    final GradientDrawable rowBg = cardBg(COLOR_CARD, COLOR_CARD_BORDER, 12);
+    final GradientDrawable rowBg = cardBg(COLOR_CARD, COLOR_CARD_BORDER, 6);
     row.setBackground(rowBg);
 
     TextView label = new TextView(getContext);
@@ -2806,7 +2869,7 @@ Toast.makeText(getContext, "Color: " + cname, Toast.LENGTH_SHORT).show();
         LinearLayout card = new LinearLayout(getContext);
         card.setOrientation(LinearLayout.VERTICAL);
         card.setLayoutParams(rowLp(6, 3, 6, 3));
-        card.setBackground(cardBg(COLOR_CARD, COLOR_CARD_BORDER, 12));
+        card.setBackground(cardBg(COLOR_CARD, COLOR_CARD_BORDER, 6));
 
         LinearLayout head = new LinearLayout(getContext);
         head.setOrientation(LinearLayout.HORIZONTAL);
@@ -2880,48 +2943,52 @@ chip.setText(String.valueOf(val));
         return ld;
     }
 
-    private void Button(LinearLayout linLayout, final int featNum, final String featName) {
+        private void Button(LinearLayout linLayout, final int featNum, final String featName) {
         final Button button = new Button(getContext);
         button.setMinHeight(0);
         button.setMinimumHeight(0);
         button.setLayoutParams(rowLp(6, 4, 6, 4));
-        button.setTextColor(Color.WHITE);
         button.setAllCaps(false);
         button.setText(Html.fromHtml(featName));
         button.setTypeface(fontBold);
         button.setTextSize(12f);
         button.setPadding(dp(10), dp(11), dp(10), dp(11));
 
-        GradientDrawable btnBg = gradBg(BTN_GRAD_1, BTN_GRAD_2, 12);
-        btnBg.setStroke(dp(1), 0x55FFFFFF);
-        button.setBackground(btnBg);
+        // ★ Special style for Close button (-6) — distinct danger color
+        if (featNum == -6) {
+            button.setTextColor(lighten(COLOR_DANGER, 0.45f));
+            button.setBackground(cardBg(
+                    withAlpha(COLOR_DANGER, 0x1F),
+                    withAlpha(COLOR_DANGER, 0xCC), 8));
+        } else {
+            button.setTextColor(Color.WHITE);
+            GradientDrawable btnBg = gradBg(BTN_GRAD_1, BTN_GRAD_2, 8);
+            btnBg.setStroke(dp(1), 0x55FFFFFF);
+            button.setBackground(btnBg);
+        }
+
         flatten(button);
         addPressAnim(button);
 
         button.setOnClickListener(new View.OnClickListener() {
-        @Override
-        public void onClick(View v) {
-            switch (featNum) {
-                case -6:
-                    if (categoryNames.size() > 0 && selectTabByName(categoryNames.get(0))) {
+            @Override
+            public void onClick(View v) {
+                switch (featNum) {
+                    case -6:
+                        if (categoryNames.size() > 0 && selectTabByName(categoryNames.get(0))) {
+                            return;
+                        }
+                        collapseMenu(ICON_ALPHA);
                         return;
-                    }
-                    collapseMenu(ICON_ALPHA);
-                    return;
-                                case -100: stopChecking = true; break;
-
-                
+                    case -100:
+                        stopChecking = true;
+                        break;
+                }
+                Preferences.changeFeatureInt(featName, featNum, 0);
             }
-            Preferences.changeFeatureInt(featName, featNum, 0);
-        }
-    });
-    linLayout.addView(button);
-}
-
-/**
- * Button যেটা নিজের background এ current color দেখাবে এবং
- * text এ hex code দেখাবে (ESP color picker এর মতো)।
- */
+        });
+        linLayout.addView(button);
+    }
 private Button makeMenuColorButton(final int color, final String label,
                                     final int featNum) {
     final Button button = new Button(getContext);
@@ -2974,7 +3041,7 @@ private void applyMenuColorButtonStyle(Button button, String label, int color) {
         button.setTypeface(fontBold);
         button.setTextSize(12f);
         button.setPadding(dp(10), dp(11), dp(10), dp(11));
-        button.setBackground(cardBg(withAlpha(COLOR_ACCENT, 0x14), withAlpha(COLOR_ACCENT, 0x88), 12));
+        button.setBackground(cardBg(withAlpha(COLOR_ACCENT, 0x14), withAlpha(COLOR_ACCENT, 0x88), 6));
         flatten(button);
         addPressAnim(button);
         button.setOnClickListener(new View.OnClickListener() {
@@ -2991,10 +3058,10 @@ private void applyMenuColorButtonStyle(Button button, String label, int color) {
 
     private void applyOnOffStyle(Button button, String name, boolean on) {
         if (on) {
-            button.setBackground(cardBg(withAlpha(ToggleON, 0x1F), withAlpha(ToggleON, 0xCC), 12));
+            button.setBackground(cardBg(withAlpha(ToggleON, 0x1F), withAlpha(ToggleON, 0xCC), 6));
             button.setText(Html.fromHtml(name + "  <font color='" + hex(ToggleON) + "'><b>ON</b></font>"));
         } else {
-            button.setBackground(cardBg(withAlpha(ToggleOFF, 0x14), withAlpha(ToggleOFF, 0x88), 12));
+            button.setBackground(cardBg(withAlpha(ToggleOFF, 0x14), withAlpha(ToggleOFF, 0x88), 6));
             button.setText(Html.fromHtml(name + "  <font color='" + hex(ToggleOFF) + "'><b>OFF</b></font>"));
         }
     }
@@ -3062,8 +3129,53 @@ private void applyMenuColorButtonStyle(Button button, String label, int color) {
     }
     
     // ================================================================
-// Programmatic toggle state update (used by Mode buttons)
-// ================================================================
+    // Telegram button — Sky blue + Telegram paper-plane icon
+    // ================================================================
+    private void ButtonTelegram(LinearLayout linLayout, final String label, final String url) {
+        final Button button = new Button(getContext);
+        button.setMinHeight(0);
+        button.setMinimumHeight(0);
+        button.setLayoutParams(rowLp(6, 4, 6, 4));
+        button.setAllCaps(false);
+        button.setTextColor(Color.WHITE);
+        button.setTypeface(fontBold);
+        button.setTextSize(12f);
+        button.setPadding(dp(12), dp(11), dp(12), dp(11));
+        button.setText(label);
+        button.setGravity(Gravity.CENTER);
+
+        // Telegram blue background (#229ED9)
+        int TG_BLUE = Color.parseColor("#229ED9");
+        int TG_BLUE_DEEP = Color.parseColor("#1A7EB0");
+        GradientDrawable bg = new GradientDrawable(
+                GradientDrawable.Orientation.LEFT_RIGHT,
+                new int[]{TG_BLUE, TG_BLUE_DEEP});
+        bg.setCornerRadius(dp(8));
+        bg.setStroke(dp(1), 0x55FFFFFF);
+        button.setBackground(bg);
+
+        // Telegram paper-plane icon (left of text)
+        TelegramIcon icon = new TelegramIcon(Color.WHITE);
+        button.setCompoundDrawablesWithIntrinsicBounds(icon, null, null, null);
+        button.setCompoundDrawablePadding(dp(8));
+
+        flatten(button);
+        addPressAnim(button);
+
+        button.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                try {
+                    Intent intent = new Intent(Intent.ACTION_VIEW);
+                    intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                    intent.setData(Uri.parse(url));
+                    getContext.startActivity(intent);
+                } catch (Exception ignored) { }
+            }
+        });
+        linLayout.addView(button);
+    }
+    
 private void setToggleState(int featNum, boolean newState) {
     ToggleHolder h = mToggles.get(featNum);
     if (h == null) return;
@@ -3088,58 +3200,66 @@ private void syncToggles(int[] featNums, boolean on) {
 // 200 UnlimAmmo, 201 MultiShot, 203 FastReload, 204 MaxRange,
 // 205 BulletSpeed, 207 DualWield, 209 HighDamage, 211 NoRecoil, 232 UnlockDual,
 // 500 FlyPower, 502 FlyWalls, 710 Teleport
-private void applyModeToMenu(int modeFeatNum, boolean enabled) {
-    switch (modeFeatNum) {
-        case 800: // Simple Mode
-            if (enabled) {
-                syncToggles(new int[]{100,101,102,103,104,200,203,211}, true);
-                syncToggles(new int[]{105,109,111,116,120,201,204,205,207,209,232,500,502,710}, false);
-            } else {
-                syncToggles(new int[]{100,200,203,211}, false);
-            }
-            break;
+    // ================================================================
+    // Mode → Toggle sync
+    // ----------------------------------------------------------------
+    // Feature numbers (Subway Surfers):
+    //   100 = No Frontal Impact    101 = No Side Impact
+    //   102 = Infinite Jump Limit  103 = High Jump Height
+    //   104 = Auto Revive          105 = Long Power Duration
+    //   106 = Instant Lane Change  107 = Score Multiplier
+    //   108 = No Collision Detect  109 = Free IAP
+    //   110 = Unlimited Coins
+    //
+    // Simple Mode  (800): 100, 101, 104, 110
+    // Max Mode     (801): 100, 101, 102, 103, 104, 105, 106, 107, 110
+    // Ultra Max    (802): 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110
+    // None         (803): সব OFF
+    // ================================================================
+    private void applyModeToMenu(int modeFeatNum, boolean enabled) {
+        switch (modeFeatNum) {
 
-        case 801: // Max Mode
-            if (enabled) {
-                syncToggles(new int[]{100,101,102,103,104,200,203,211,
-                                      109,111,116,201,204,205,209,232}, true);
-                syncToggles(new int[]{105,207,500,502,710}, false);
-            } else {
-                syncToggles(new int[]{109,111,116,201,204,205,209,232}, false);
-            }
-            break;
+            case 800: // Simple Mode
+                if (enabled) {
+                    // Simple ON — শুধু এগুলো ON
+                    syncToggles(new int[]{100, 101, 104, 110}, true);
+                    // বাকি সব forcibly OFF
+                    syncToggles(new int[]{102, 103, 105, 106, 107, 108, 109}, false);
+                } else {
+                    // Simple OFF — শুধু simple mode এর toggle গুলো OFF
+                    syncToggles(new int[]{100, 101, 104, 110}, false);
+                }
+                break;
 
-        case 802: // Ultra Max Mode
-            if (enabled) {
-                syncToggles(new int[]{100,101,102,103,104,200,203,211,
-                                      109,111,116,201,204,205,209,232,
-                                      207,500,502,710}, true);
-                syncToggles(new int[]{105}, false);
-            } else {
-                syncToggles(new int[]{100,200,203,211,
-                                      109,111,116,201,204,205,209,232,
-                                      207,500,502,710}, false);
-            }
-            break;
+            case 801: // Max Mode
+                if (enabled) {
+                    syncToggles(new int[]{100, 101, 102, 103, 104, 105, 106, 107, 110}, true);
+                    syncToggles(new int[]{108, 109}, false);
+                } else {
+                    syncToggles(new int[]{102, 103, 105, 106, 107}, false);
+                }
+                break;
 
-        case 803: // None — সব OFF
-            if (enabled) {
-                syncToggles(new int[]{100,101,102,103,104,105,
-                                      109,111,116,120,
-                                      200,201,203,204,205,207,209,211,232,
-                                      500,502,710}, false);
-            }
-            break;
+            case 802: // Ultra Max Mode — সব ON
+                if (enabled) {
+                    syncToggles(new int[]{100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110}, true);
+                } else {
+                    syncToggles(new int[]{102, 103, 105, 106, 107, 108, 109}, false);
+                }
+                break;
+
+            case 803: // None — সব OFF
+                syncToggles(new int[]{100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110}, false);
+                break;
+        }
     }
-}
-
     private void Spinner(LinearLayout linLayout, final int featNum, final String featName, final String list) {
         final Context ctx = getContext;
         final List<String> lists = new LinkedList<String>(Arrays.asList(list.split(",")));
 
         FrameLayout holder = new FrameLayout(ctx);
         holder.setLayoutParams(rowLp(6, 3, 6, 3));
-        holder.setBackground(cardBg(COLOR_CARD, COLOR_CARD_BORDER, 12));
+        holder.setBackground(cardBg(COLOR_CARD, COLOR_CARD_BORDER, 6));
 
         final Spinner spinner = new Spinner(ctx, Spinner.MODE_DROPDOWN);
         spinner.setLayoutParams(new FrameLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT));
@@ -3216,7 +3336,7 @@ private void applyModeToMenu(int modeFeatNum, boolean enabled) {
         button.setTypeface(fontMedium);
         button.setTextSize(12f);
         button.setPadding(dp(10), dp(11), dp(10), dp(11));
-        button.setBackground(cardBg(COLOR_CARD, withAlpha(COLOR_ACCENT, 0x66), 12));
+        button.setBackground(cardBg(COLOR_CARD, withAlpha(COLOR_ACCENT, 0x66), 6));
         button.setTextColor(TEXT_COLOR_2);
         flatten(button);
         addPressAnim(button);
@@ -3257,7 +3377,7 @@ private void applyModeToMenu(int modeFeatNum, boolean enabled) {
         button.setTypeface(fontMedium);
         button.setTextSize(12f);
         button.setPadding(dp(10), dp(11), dp(10), dp(11));
-        button.setBackground(cardBg(COLOR_CARD, withAlpha(COLOR_ACCENT, 0x66), 12));
+        button.setBackground(cardBg(COLOR_CARD, withAlpha(COLOR_ACCENT, 0x66), 6));
         button.setTextColor(TEXT_COLOR_2);
         flatten(button);
         addPressAnim(button);
@@ -3298,7 +3418,7 @@ private void applyModeToMenu(int modeFeatNum, boolean enabled) {
         button.setTypeface(fontMedium);
         button.setTextSize(12f);
         button.setPadding(dp(10), dp(11), dp(10), dp(11));
-        button.setBackground(cardBg(COLOR_CARD, withAlpha(COLOR_ACCENT, 0x66), 12));
+        button.setBackground(cardBg(COLOR_CARD, withAlpha(COLOR_ACCENT, 0x66), 6));
         button.setTextColor(TEXT_COLOR_2);
         flatten(button);
         addPressAnim(button);
@@ -3321,7 +3441,7 @@ private void applyModeToMenu(int modeFeatNum, boolean enabled) {
 
     private void CheckBox(LinearLayout linLayout, final int featNum, final String featName, boolean switchedOn) {
         final CheckBox checkBox = new CheckBox(getContext);
-        final GradientDrawable cbBg = cardBg(COLOR_CARD, COLOR_CARD_BORDER, 12);
+        final GradientDrawable cbBg = cardBg(COLOR_CARD, COLOR_CARD_BORDER, 6);
         checkBox.setLayoutParams(rowLp(6, 3, 6, 3));
         checkBox.setBackground(cbBg);
         checkBox.setText(featName);
@@ -3358,7 +3478,7 @@ private void applyModeToMenu(int modeFeatNum, boolean enabled) {
         textView.setPadding(0, dp(2), 0, dp(4));
         final RadioGroup radioGroup = new RadioGroup(getContext);
         radioGroup.setLayoutParams(rowLp(6, 3, 6, 3));
-        radioGroup.setBackground(cardBg(COLOR_CARD, COLOR_CARD_BORDER, 12));
+        radioGroup.setBackground(cardBg(COLOR_CARD, COLOR_CARD_BORDER, 6));
         radioGroup.setPadding(dp(12), dp(8), dp(12), dp(8));
         radioGroup.setOrientation(LinearLayout.VERTICAL);
         radioGroup.addView(textView);
@@ -3456,7 +3576,7 @@ private void applyModeToMenu(int modeFeatNum, boolean enabled) {
         headRow.setGravity(Gravity.CENTER_VERTICAL);
         GradientDrawable colBg = new GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT,
                                                       new int[]{CollapseColor, withAlpha(COLOR_ACCENT_2, 0x30)});
-        colBg.setCornerRadius(dp(12));
+        colBg.setCornerRadius(dp(6));
         colBg.setStroke(dp(1), withAlpha(COLOR_ACCENT, 0x77));
         headRow.setBackground(colBg);
 
