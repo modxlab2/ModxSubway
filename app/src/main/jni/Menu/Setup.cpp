@@ -4,12 +4,7 @@
 #include "Includes/Utils.hpp"
 #include <jni.h>
 
-extern "C" JNIEXPORT void JNICALL
-Java_com_android_support_Menu_Draw(JNIEnv*, jclass, jobject, jobject);
 
-// ================================================================
-// Native Crash Dir Setter — Java থেকে path সেট করার জন্য
-// ================================================================
 extern "C" JNIEXPORT void JNICALL
 Java_com_android_support_Main_setNativeCrashDir(JNIEnv*, jclass, jstring);
 
@@ -41,11 +36,6 @@ int RegisterMenu(JNIEnv *env) {
                 reinterpret_cast<void *>(SettingsList)},
             {OBFUSCATE("GetFeatureList"),  OBFUSCATE("()[Ljava/lang/String;"),
                 reinterpret_cast<void *>(GetFeatureList)},
-
-            // ESP draw callback
-            {OBFUSCATE("Draw"),
-                OBFUSCATE("(Lcom/android/support/ESPView;Landroid/graphics/Canvas;)V"),
-                reinterpret_cast<void *>(Java_com_android_support_Menu_Draw)},
     };
 
     jclass clazz = env->FindClass(OBFUSCATE("com/android/support/Menu"));
