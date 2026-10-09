@@ -14,6 +14,9 @@ include $(PREBUILT_STATIC_LIBRARY)
 include $(CLEAR_VARS)
 LOCAL_MODULE    := ModXLab
 
+# ================================================================
+# Compiler flags
+# ================================================================
 LOCAL_CFLAGS := \
     -w \
     -s \
@@ -59,7 +62,7 @@ LOCAL_C_INCLUDES += $(LOCAL_PATH)/Includes/
 LOCAL_C_INCLUDES += $(LOCAL_PATH)/AutoHook/
 
 # ================================================================
-# Source files  —  ★ AutoHook/AutoHook.cpp সরানো হয়েছে (header-only)
+# Source files  —  ★ Includes/Utils.cpp সরানো হয়েছে
 # ================================================================
 LOCAL_SRC_FILES := \
     Main.cpp \
@@ -67,7 +70,6 @@ LOCAL_SRC_FILES := \
     Menu/Jni.cpp \
     Menu/Menu.cpp \
     Menu/Setup.cpp \
-    Includes/Utils.cpp \
     Includes/MonoString.cpp \
     Substrate/hde64.c \
     Substrate/SubstrateDebug.cpp \
