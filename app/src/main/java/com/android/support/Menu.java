@@ -254,9 +254,7 @@ private static final HashMap<Integer, Integer> SEEK_DEFAULTS = new HashMap<Integ
         SEEK_DEFAULTS.put(106, 3);     // Line Thickness default 3
         SEEK_DEFAULTS.put(107, 115);   // Box Size default 115
     }
-    ESPView espview;
-    WindowManager espWindowManager;
-    WindowManager.LayoutParams espParams;
+    
 
     native void Init(Context context, TextView title, TextView subTitle);
     native String Icon();
@@ -265,7 +263,7 @@ private static final HashMap<Integer, Integer> SEEK_DEFAULTS = new HashMap<Integ
     native String[] SettingsList();
     native boolean IsGameLibLoaded();
 
-    public static native void Draw(ESPView espView, Canvas canvas);
+    
     public static native void SetTeleportTargetNorm(float nx, float ny);
 public static native boolean GetTeleportEnabled();
 
@@ -630,34 +628,6 @@ mExpanded.addView(shimmer);
         resizeHandle.setOnTouchListener(resizeTouchListener);
         menuFrame.addView(resizeHandle);
 
-        // ==================== ESP OVERLAY SETUP ====================
-        try {
-            espview = new ESPView(context);
-            espWindowManager = (WindowManager) context.getSystemService(context.WINDOW_SERVICE);
-
-            int espType = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
-                ? WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-                : WindowManager.LayoutParams.TYPE_PHONE;
-
-            espParams = new WindowManager.LayoutParams(
-                WindowManager.LayoutParams.MATCH_PARENT,
-                WindowManager.LayoutParams.MATCH_PARENT,
-                espType,
-                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
-                | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
-                | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
-                | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
-                | WindowManager.LayoutParams.FLAG_TRANSLUCENT_STATUS,
-                PixelFormat.TRANSPARENT);
-            espParams.gravity = Gravity.TOP | Gravity.START;
-            espParams.x = 0;
-            espParams.y = 0;
-
-            espWindowManager.addView(espview, espParams);
-        } catch (Exception e) {
-            Log.e(TAG, "ESPView add failed: " + e);
-        }
-        // ==================================================================
         
         try {
     tpPadView = new TeleportPadTouchView(context);
@@ -2445,23 +2415,16 @@ public void setTeleportPadVisible(boolean visible) {
     // (optional) hide করলে marker reset
     if (!visible) tpPadView.invalidate();
 }
-    public void onDestroy() {
+        public void onDestroy() {
     stopGlowAnimator();
     if (rootFrame != null && mWindowManager != null) {
         try { mWindowManager.removeView(rootFrame); } catch (Exception e) {}
-    }
-    if (espview != null && espWindowManager != null) {
-        try { espWindowManager.removeView(espview); } catch (Exception e) {}
     }
     if (tpPadView != null && tpPadWindowManager != null) {
         try { tpPadWindowManager.removeView(tpPadView); } catch (Exception e) {}
     }
     instance = null;
 }
-
-    // ================================================================
-    // Styled dialog (premium replacement for the default AlertDialog look)
-    // ================================================================
     private Button dialogButton(String text, boolean primary) {
         Button b = new Button(getContext);
         b.setText(text);
