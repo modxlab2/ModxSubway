@@ -6,7 +6,7 @@ import android.os.Bundle;
 
 public class MainActivity extends Activity {
 
-    public String GameActivity = "com.sybo.subwaysurfers.SubwaySurfersActivity";
+    public String GameActivity = "com.sybogames.chili.multidex.ChiliMultidexSupportActivity";
     public boolean hasLaunched = false;
 
     @Override
