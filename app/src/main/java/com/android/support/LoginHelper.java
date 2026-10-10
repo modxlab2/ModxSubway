@@ -982,7 +982,7 @@ public class LoginHelper {
         GradientDrawable cardBg = new GradientDrawable(
                 GradientDrawable.Orientation.TOP_BOTTOM,
                 new int[]{COLOR_DIALOG_BG_TOP, COLOR_DIALOG_BG});
-        cardBg.setCornerRadius(dp(18));
+        cardBg.setCornerRadius(dp(10));
         cardBg.setStroke(dp(1), COLOR_OUTLINE);
         card.setBackground(cardBg);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
