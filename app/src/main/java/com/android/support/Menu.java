@@ -2903,8 +2903,7 @@ Toast.makeText(getContext, "Color: " + cname, Toast.LENGTH_SHORT).show();
                 final SeekBar seekBar = new SeekBar(getContext);
         seekBar.setLayoutParams(new LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT));
         seekBar.setPadding(dp(16), dp(16), dp(16), dp(18));   // ★ thumb না কাটার জন্য বেশি padding
-        seekBar.setClipToPadding(false);
-        seekBar.setClipChildren(false);
+        
         seekBar.setMax(max);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) seekBar.setMin(min);
         seekBar.setProgressDrawable(new SeekTrackDrawable(dpf(6f), COLOR_TRACK, COLOR_ACCENT, COLOR_SUCCESS));
