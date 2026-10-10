@@ -141,7 +141,7 @@ public class LoginHelper {
 
         final LinearLayout card = new LinearLayout(ctx);
         card.setOrientation(LinearLayout.VERTICAL);
-        card.setPadding(dp(14), dp(24), dp(14), dp(12));
+        card.setPadding(dp(14), dp(10), dp(14), dp(12));
         card.setGravity(Gravity.CENTER_HORIZONTAL);
         card.setBackgroundColor(Color.TRANSPARENT);
         root.addView(card);
@@ -982,7 +982,7 @@ public class LoginHelper {
         GradientDrawable cardBg = new GradientDrawable(
                 GradientDrawable.Orientation.TOP_BOTTOM,
                 new int[]{COLOR_DIALOG_BG_TOP, COLOR_DIALOG_BG});
-        cardBg.setCornerRadius(dp(10));
+        cardBg.setCornerRadius(dp(18));
         cardBg.setStroke(dp(1), COLOR_OUTLINE);
         card.setBackground(cardBg);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
