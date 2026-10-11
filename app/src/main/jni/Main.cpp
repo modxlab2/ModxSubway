@@ -45,7 +45,6 @@ static std::atomic<int>  g_AirJumpHeight    {0};       // 117 (0-200)
 // ================================================================
 //                     ORIGINAL FUNCTION POINTERS
 // ================================================================
-// ---- CharacterMotor / CharacterMotorAbilities ----
 static bool  (*old_CheckFrontalImpact)(...)     = nullptr;
 static bool  (*old_CheckSideImpact)(...)        = nullptr;
 static int   (*old_get_JumpLimit)(...)          = nullptr;
@@ -57,7 +56,6 @@ static bool  (*old_get_NoCornerCollision)(...)  = nullptr;
 static bool  (*old_get_CanJump)(...)            = nullptr;
 static bool  (*old_get_HasMultiJumpsRemaining)(...) = nullptr;
 
-// ---- Power / Score / Shop ----
 static bool  (*old_IsAutoReviveEnabled)(...)    = nullptr;
 static float (*old_GetDuration)(...)            = nullptr;
 static int   (*old_get_BaseMultiplierSum)(...)  = nullptr;
@@ -66,20 +64,17 @@ static int   (*old_GetCurrency)(...)            = nullptr;
 static void  (*old_ActivateOrAddPower)(...)     = nullptr;
 static bool  (*old_IsPowerActive)(...)          = nullptr;
 
-// ---- Speed Config ----
 static float (*old_SpeedCfg_get_StartSpeed)(...)   = nullptr;
 static float (*old_SpeedCfg_get_EndSpeed)(...)     = nullptr;
 static float (*old_Motor_get_StartSpeed)(...)      = nullptr;
 static float (*old_Motor_get_EndSpeed)(...)        = nullptr;
 
-// ---- Stumble / Death ----
 static void  (*old_Stumble_EntityType)(...)     = nullptr;
 static void  (*old_Stumble_StumbleType)(...)    = nullptr;
 static void  (*old_Stumble_CollisionData)(...)  = nullptr;
 static void  (*old_Kill_CollisionData)(...)     = nullptr;
 static void  (*old_Kill_StumbleType)(...)       = nullptr;
 
-// ---- Ads ----
 static bool  (*old_IsRewardedCapped)(...)       = nullptr;
 static bool  (*old_IsInterstitialCapped)(...)   = nullptr;
 static bool  (*old_IsBannerCapped)(...)         = nullptr;
@@ -87,8 +82,6 @@ static bool  (*old_IsBannerCapped)(...)         = nullptr;
 // ================================================================
 //                       HOOK IMPLEMENTATIONS
 // ================================================================
-
-// --- SYBO.RunnerCore.Character.CharacterMotor ---
 static bool new_CheckFrontalImpact(void* self, void* other) {
     if (!self) return false;
     if (g_FrontalImpact.load() || g_NoCollision.load() || g_NoStumble.load()) return false;
@@ -101,8 +94,6 @@ static bool new_CheckSideImpact(void* self, void* other) {
     return old_CheckSideImpact ? old_CheckSideImpact(self, other) : false;
 }
 
-// ★ FIXED No-Collision: এই দুটো hook-ই আসল "no collision" feature দেয়
-// কিন্তু trigger/coin collection অক্ষত থাকে
 static bool new_get_NoLowerCollision(void* self) {
     if (!self) return false;
     if (g_NoCollision.load() || g_NoStumble.load()) return true;
@@ -115,7 +106,6 @@ static bool new_get_NoCornerCollision(void* self) {
     return old_get_NoCornerCollision ? old_get_NoCornerCollision(self) : false;
 }
 
-// ---- Infinite Jump ----
 static bool new_get_CanJump(void* self) {
     if (!self) return true;
     if (g_InfiniteJump.load()) return true;
@@ -128,7 +118,6 @@ static bool new_get_HasMultiJumpsRemaining(void* self) {
     return old_get_HasMultiJumpsRemaining ? old_get_HasMultiJumpsRemaining(self) : true;
 }
 
-// --- CharacterMotorAbilities ---
 static int new_get_JumpLimit(void* self) {
     if (!self) return 0;
     int v = g_JumpLimit.load();
@@ -148,7 +137,6 @@ static float new_get_AirJumpHeight(void* self) {
     if (!self) return 0.0f;
     int v = g_AirJumpHeight.load();
     if (v > 0) return (float) v;
-    // infinite jump-এর সাথে air jump height ও boost করি
     if (g_InfiniteJump.load()) return 100.0f;
     return old_get_AirJumpHeight ? old_get_AirJumpHeight(self) : 0.0f;
 }
@@ -159,14 +147,12 @@ static float new_get_LaneChangeDuration(void* self) {
     return old_get_LaneChangeDuration ? old_get_LaneChangeDuration(self) : 0.0f;
 }
 
-// --- SYBO.Subway.StumbleBehaviour ---
 static bool new_IsAutoReviveEnabled(void* self) {
     if (!self) return false;
     if (g_AutoRevive.load() || g_NoStumble.load()) return true;
     return old_IsAutoReviveEnabled ? old_IsAutoReviveEnabled(self) : false;
 }
 
-// --- SYBO.RunnerCore.Powers.PowerConfig ---
 static float new_GetDuration(void* self, void* cfg) {
     if (!self) return 0.0f;
     int v = g_PowerDuration.load();
@@ -175,7 +161,6 @@ static float new_GetDuration(void* self, void* cfg) {
     return old_GetDuration ? old_GetDuration(self, cfg) : 0.0f;
 }
 
-// --- SYBO.Subway.ScoreMultiplierManager ---
 static int new_get_BaseMultiplierSum(void* self) {
     if (!self) return 0;
     int v = g_ScoreMultiplier.load();
@@ -183,7 +168,6 @@ static int new_get_BaseMultiplierSum(void* self) {
     return old_get_BaseMultiplierSum ? old_get_BaseMultiplierSum(self) : 0;
 }
 
-// --- Currency / IAP ---
 static bool new_get_IsIAP(void* self) {
     if (!self) return false;
     if (g_FreeShopping.load()) return false;
@@ -196,9 +180,6 @@ static int new_GetCurrency(void* self, int currencyType) {
     return old_GetCurrency ? old_GetCurrency(self, currencyType) : 0;
 }
 
-// ================================================================
-//              ★ NEW: Speed Multiplier hooks
-// ================================================================
 static float new_SpeedCfg_get_StartSpeed(void* self) {
     if (!self) return 0.0f;
     float orig = old_SpeedCfg_get_StartSpeed ? old_SpeedCfg_get_StartSpeed(self) : 0.0f;
@@ -231,12 +212,9 @@ static float new_Motor_get_EndSpeed(void* self) {
     return orig;
 }
 
-// ================================================================
-//              ★ NEW: Stumble/Death blockers
-// ================================================================
 static void new_Stumble_EntityType(void* self, int group, int entityType) {
     if (!self) return;
-    if (g_NoStumble.load() || g_NoCollision.load()) return;   // stumble এড়িয়ে যাই
+    if (g_NoStumble.load() || g_NoCollision.load()) return;
     if (old_Stumble_EntityType) old_Stumble_EntityType(self, group, entityType);
 }
 
@@ -264,21 +242,14 @@ static void new_Kill_StumbleType(void* self, int stumbleType) {
     if (old_Kill_StumbleType) old_Kill_StumbleType(self, stumbleType);
 }
 
-// ================================================================
-//              ★ NEW: Magnet Always On (power active check)
-// ================================================================
-// PowerType enum: Magnet = 102 (from dump)
 static bool new_IsPowerActive(void* self, int powerType) {
     if (!self) return false;
-    if (g_MagnetAlwaysOn.load() && powerType == 102) return true;  // Magnet
+    if (g_MagnetAlwaysOn.load() && powerType == 102) return true;
     return old_IsPowerActive ? old_IsPowerActive(self, powerType) : false;
 }
 
-// ================================================================
-//              ★ NEW: Ad Block hooks
-// ================================================================
 static bool new_IsRewardedAdCapped(void* self, void* placementName) {
-    if (g_BlockAds.load()) return true;   // capped = ad দেখাবে না
+    if (g_BlockAds.load()) return true;
     return old_IsRewardedCapped ? old_IsRewardedCapped(self, placementName) : false;
 }
 
@@ -303,9 +274,7 @@ void* hack_thread(void*) {
     sleep(3);
     LOGD(OBFUSCATE("il2cpp loaded — installing auto-update hooks"));
 
-    // ------------------------------------------------------------
-    //  SYBO.RunnerCore.Character.CharacterMotor
-    // ------------------------------------------------------------
+    // ---- CharacterMotor ----
     {
         auto CM = new LoadClass(OBFUSCATE("SYBO.RunnerCore.Character"),
                                 OBFUSCATE("CharacterMotor"));
@@ -331,10 +300,7 @@ void* hack_thread(void*) {
         }
     }
 
-    // ------------------------------------------------------------
-    //  SYBO.RunnerCore.Character.CharacterMotorAbilities
-    //  ★ FIX: detectCollisions এর বদলে NoLowerCollision / NoCornerCollision
-    // ------------------------------------------------------------
+    // ---- CharacterMotorAbilities ----
     {
         auto CMA = new LoadClass(OBFUSCATE("SYBO.RunnerCore.Character"),
                                  OBFUSCATE("CharacterMotorAbilities"));
@@ -361,10 +327,7 @@ void* hack_thread(void*) {
         }
     }
 
-    // ------------------------------------------------------------
-    //  SYBO.RunnerCore.Character.CharacterSpeedConfigInstance
-    //  ★ NEW: Character Speed Multiplier
-    // ------------------------------------------------------------
+    // ---- CharacterSpeedConfigInstance ----
     {
         auto SC = new LoadClass(OBFUSCATE("SYBO.RunnerCore.Character"),
                                 OBFUSCATE("CharacterSpeedConfigInstance"));
@@ -379,9 +342,7 @@ void* hack_thread(void*) {
         }
     }
 
-    // ------------------------------------------------------------
-    //  SYBO.Subway.StumbleBehaviour  (Auto Revive + Stumble blocker)
-    // ------------------------------------------------------------
+    // ---- StumbleBehaviour ----
     {
         auto SB = new LoadClass(OBFUSCATE("SYBO.Subway"),
                                 OBFUSCATE("StumbleBehaviour"));
@@ -394,14 +355,11 @@ void* hack_thread(void*) {
         }
     }
 
-    // ------------------------------------------------------------
-    //  SYBO.Subway.CharacterStumble  (Stumble/Kill blocker)
-    // ------------------------------------------------------------
+    // ---- CharacterStumble ----
     {
         auto CS = new LoadClass(OBFUSCATE("SYBO.Subway"),
                                 OBFUSCATE("CharacterStumble"));
         if (CS && CS->thisclass) {
-            // NOTE: overloaded methods — param count দিয়ে try করছি
             DWORD oStumbleE = CS->GetMethodOffsetByName(OBFUSCATE("Stumble"), 2);
             DWORD oKillC    = CS->GetMethodOffsetByName(OBFUSCATE("Kill"),    1);
             if (oStumbleE) HOOK_AU((void*)oStumbleE, (void*)new_Stumble_CollisionData, old_Stumble_CollisionData);
@@ -413,9 +371,7 @@ void* hack_thread(void*) {
         }
     }
 
-    // ------------------------------------------------------------
-    //  SYBO.RunnerCore.Powers.PowerConfig
-    // ------------------------------------------------------------
+    // ---- PowerConfig ----
     {
         auto PC = new LoadClass(OBFUSCATE("SYBO.RunnerCore.Powers"),
                                 OBFUSCATE("PowerConfig"));
@@ -428,9 +384,7 @@ void* hack_thread(void*) {
         }
     }
 
-    // ------------------------------------------------------------
-    //  SYBO.Subway.ScoreMultiplierManager
-    // ------------------------------------------------------------
+    // ---- ScoreMultiplierManager ----
     {
         auto SMM = new LoadClass(OBFUSCATE("SYBO.Subway"),
                                  OBFUSCATE("ScoreMultiplierManager"));
@@ -443,9 +397,7 @@ void* hack_thread(void*) {
         }
     }
 
-    // ------------------------------------------------------------
-    //  SYBO.Subway.CharacterPower  (Magnet + Power activate)
-    // ------------------------------------------------------------
+    // ---- CharacterPower ----
     {
         auto CP = new LoadClass(OBFUSCATE("SYBO.Subway"),
                                 OBFUSCATE("CharacterPower"));
@@ -458,9 +410,7 @@ void* hack_thread(void*) {
         }
     }
 
-    // ------------------------------------------------------------
-    //  SYBO.Subway.Core.CommonData.Currency
-    // ------------------------------------------------------------
+    // ---- Currency ----
     {
         auto CUR = new LoadClass(OBFUSCATE("SYBO.Subway.Core.CommonData"),
                                  OBFUSCATE("Currency"));
@@ -473,9 +423,7 @@ void* hack_thread(void*) {
         }
     }
 
-    // ------------------------------------------------------------
-    //  SYBO.Subway.Core.ProfileData.WalletModel
-    // ------------------------------------------------------------
+    // ---- WalletModel ----
     {
         auto WM = new LoadClass(OBFUSCATE("SYBO.Subway.Core.ProfileData"),
                                 OBFUSCATE("WalletModel"));
@@ -489,8 +437,10 @@ void* hack_thread(void*) {
     }
 
     // ------------------------------------------------------------
-    //  ★ NEW: Ad Block hooks
-    //  SubwayBackfillAdManagerProvider : AdManagerProvider<T>
+    //  ★ Ad Block hooks
+    //  ⚠ FIX: OBFUSCATE() runtime variable-এ ব্যবহার করা যাবে না।
+    //         String literals গুলো OBFUSCATE() দিয়ে রাখা যায়,
+    //         কিন্তু ns/cn loop variable সরাসরি পাস করতে হবে।
     // ------------------------------------------------------------
     {
         const char* adClasses[] = {
@@ -507,7 +457,8 @@ void* hack_thread(void*) {
 
         for (const char* ns : adNamespaces) {
             for (const char* cn : adClasses) {
-                auto AC = new LoadClass(OBFUSCATE(ns), OBFUSCATE(cn));
+                // ✅ FIX: runtime variable সরাসরি পাস — OBFUSCATE() ছাড়া
+                auto AC = new LoadClass(ns, cn);
                 if (AC && AC->thisclass) {
                     DWORD oRwd  = AC->GetMethodOffsetByName(OBFUSCATE("IsRewardedAdCapped"), 1);
                     DWORD oInt  = AC->GetMethodOffsetByName(OBFUSCATE("IsInterstitialCapped"), 1);
@@ -533,9 +484,7 @@ jobjectArray GetFeatureList(JNIEnv* env, jobject) {
     jobjectArray ret;
     const char* features[] = {
 
-        // ========================================================
-        //  MAIN TAB — Mode Presets
-        // ========================================================
+        // MAIN TAB
         OBFUSCATE("800_ButtonOnOff_Simple Mode"),
         OBFUSCATE("801_ButtonOnOff_Max Mode"),
         OBFUSCATE("802_ButtonOnOff_Ultra Max Mode"),
@@ -546,11 +495,8 @@ jobjectArray GetFeatureList(JNIEnv* env, jobject) {
         OBFUSCATE("SmallTextView_<b><font color='#3DDB87'>Ultra:</font></b> + NoCollision, Free"),
         OBFUSCATE("SmallTextView_<b><font color='#FFBB33'>None:</font></b> Reset all"),
 
-        // ========================================================
-        //  Runner — Movement & Survival
-        // ========================================================
+        // Runner
         OBFUSCATE("Category_Runner"),
-
         OBFUSCATE("100_Toggle_No Head-On Collision"),
         OBFUSCATE("101_Toggle_No Side Collision"),
         OBFUSCATE("102_SeekBar_Jump Limit_0_999"),
@@ -562,36 +508,24 @@ jobjectArray GetFeatureList(JNIEnv* env, jobject) {
         OBFUSCATE("114_Toggle_God Mode (No Stumble)"),
         OBFUSCATE("117_SeekBar_Air Jump Height_0_200"),
 
-        // ========================================================
-        //  Powers — Power-up related
-        // ========================================================
+        // Powers
         OBFUSCATE("Category_Powers"),
-
         OBFUSCATE("105_SeekBar_Power Duration_0_999"),
         OBFUSCATE("106_Toggle_Fast Lane Change"),
         OBFUSCATE("115_Toggle_Magnet Always On"),
         OBFUSCATE("116_Toggle_Max Power Level"),
 
-        // ========================================================
-        //  Score — Score boosting
-        // ========================================================
+        // Score
         OBFUSCATE("Category_Score"),
-
         OBFUSCATE("107_SeekBar_Score Multiplier_0_999"),
 
-        // ========================================================
-        //  Shop — Currency / IAP
-        // ========================================================
+        // Shop
         OBFUSCATE("Category_Shop"),
-
         OBFUSCATE("109_Toggle_Free Shopping (IAP)"),
         OBFUSCATE("110_Toggle_Unlimited Coins"),
 
-        // ========================================================
-        //  Ads — Advertisement
-        // ========================================================
+        // Ads
         OBFUSCATE("Category_Ads"),
-
         OBFUSCATE("112_Toggle_Block Ads (All)"),
     };
 
@@ -615,8 +549,6 @@ void Changes(JNIEnv*, jclass, jobject,
              jlong, jboolean boolean, jstring) {
 
     switch (featNum) {
-
-        // -------- Individual features --------
         case 100: g_FrontalImpact.store(boolean);     break;
         case 101: g_SideImpact.store(boolean);        break;
         case 102: g_JumpLimit.store(value);           break;
@@ -625,10 +557,9 @@ void Changes(JNIEnv*, jclass, jobject,
         case 105: g_PowerDuration.store(value);       break;
         case 106: g_FastLaneChange.store(boolean);    break;
         case 107: g_ScoreMultiplier.store(value);     break;
-        case 108: g_NoCollision.store(boolean);       break;   // ★ FIXED
+        case 108: g_NoCollision.store(boolean);       break;
         case 109: g_FreeShopping.store(boolean);      break;
         case 110: g_UnlimitedCoins.store(boolean);    break;
-        // -------- NEW --------
         case 111: g_SpeedMultiplier.store(value);     break;
         case 112: g_BlockAds.store(boolean);          break;
         case 113: g_InfiniteJump.store(boolean);      break;
@@ -637,16 +568,12 @@ void Changes(JNIEnv*, jclass, jobject,
         case 116: g_MaxPowerLevel.store(boolean);     break;
         case 117: g_AirJumpHeight.store(value);       break;
 
-        // --------------------------------------------------------
-        //  800 — Simple Mode
-        // --------------------------------------------------------
         case 800: {
             if (boolean) {
                 g_FrontalImpact.store(true);
                 g_SideImpact.store(true);
                 g_AutoRevive.store(true);
                 g_UnlimitedCoins.store(true);
-                // Advanced OFF
                 g_JumpLimit.store(0);
                 g_JumpHeight.store(0);
                 g_PowerDuration.store(0);
@@ -670,9 +597,6 @@ void Changes(JNIEnv*, jclass, jobject,
             LOGD(OBFUSCATE("MODE: Simple = %d"), (int)boolean);
         } break;
 
-        // --------------------------------------------------------
-        //  801 — Max Mode
-        // --------------------------------------------------------
         case 801: {
             if (boolean) {
                 g_FrontalImpact.store(true);
@@ -684,7 +608,6 @@ void Changes(JNIEnv*, jclass, jobject,
                 g_JumpHeight.store(50);
                 g_PowerDuration.store(100);
                 g_ScoreMultiplier.store(10);
-                // Risky OFF
                 g_NoCollision.store(false);
                 g_FreeShopping.store(false);
                 g_SpeedMultiplier.store(0);
@@ -704,9 +627,6 @@ void Changes(JNIEnv*, jclass, jobject,
             LOGD(OBFUSCATE("MODE: Max = %d"), (int)boolean);
         } break;
 
-        // --------------------------------------------------------
-        //  802 — Ultra Max Mode
-        // --------------------------------------------------------
         case 802: {
             if (boolean) {
                 g_FrontalImpact.store(true);
@@ -750,9 +670,6 @@ void Changes(JNIEnv*, jclass, jobject,
             LOGD(OBFUSCATE("MODE: UltraMax = %d"), (int)boolean);
         } break;
 
-        // --------------------------------------------------------
-        //  803 — None (Reset)
-        // --------------------------------------------------------
         case 803: {
             g_FrontalImpact.store(false);
             g_SideImpact.store(false);
@@ -781,7 +698,7 @@ void Changes(JNIEnv*, jclass, jobject,
 }
 
 // ================================================================
-//     STUBS — Menu.java যাতে UnsatisfiedLinkError না দেয়
+//     STUBS
 // ================================================================
 extern "C" JNIEXPORT void JNICALL
 Java_com_android_support_Menu_Draw(JNIEnv*, jclass, jobject, jobject) { }
