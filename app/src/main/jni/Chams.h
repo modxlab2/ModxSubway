@@ -12,9 +12,6 @@
 #include <ctime>
 #include <android/log.h>
 
-// ImGui for ImVec4
-#include "ImGui/imgui.h"
-
 // GL includes
 #include <GLES2/gl2.h>
 
@@ -36,6 +33,15 @@
 
 using namespace std;
 
+// ================================================================
+//  Lightweight Vec4  (replaces ImVec4 — no ImGui needed)
+// ================================================================
+struct Vec4 {
+    float x, y, z, w;
+    Vec4() : x(0), y(0), z(0), w(1) {}
+    Vec4(float _x, float _y, float _z, float _w) : x(_x), y(_y), z(_z), w(_w) {}
+};
+
 #define CHAMS_TAG "CHAMS"
 #define CHAMS_LOGI(...) __android_log_print(ANDROID_LOG_INFO,  CHAMS_TAG, __VA_ARGS__)
 
@@ -51,8 +57,8 @@ int chamsint = 0;
 bool enableRainbow     = false;
 bool enableRainbowWall = false;
 
-ImVec4 inWallColor  = ImVec4(1.0f, 0.0f, 0.0f, 1.0f);
-ImVec4 visibleColor = ImVec4(0.0f, 1.0f, 0.0f, 1.0f);
+Vec4 inWallColor  = Vec4(1.0f, 0.0f, 0.0f, 1.0f);
+Vec4 visibleColor = Vec4(0.0f, 1.0f, 0.0f, 1.0f);
 
 // GL function pointers
 void (*p_glGetIntegerv)(unsigned int, int *)            = nullptr;
