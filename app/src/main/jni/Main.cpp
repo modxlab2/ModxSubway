@@ -1,6 +1,6 @@
 // ================================================================
-// ModX Lab — Subway Surfers (Unity / IL2CPP)
-// Auto-Update Hook System + ZEFF Chams (Professional)
+// ModX Lab — Subway Surfers
+// Auto-Update Hook System + Chams (Train-Wall Optimized)
 // ================================================================
 
 #include "Includes.h"
@@ -20,7 +20,7 @@
 #define LIB OBFUSCATE("libil2cpp.so")
 
 // ================================================================
-//   FEATURE STATE — Gameplay
+//   FEATURE STATE
 // ================================================================
 static std::atomic<bool> g_FrontalImpact    {false};
 static std::atomic<bool> g_SideImpact       {false};
@@ -275,38 +275,26 @@ jobjectArray GetFeatureList(JNIEnv* env, jobject) {
         OBFUSCATE("110_Toggle_Unlimited Coins"),
 
         // ============================================================
-        //  ★ CHAMS TAB  — fresh & clean
+        //  ★ CHAMS TAB  — fresh, simplified
         // ============================================================
         OBFUSCATE("Category_Chams"),
 
-        // --- Header ---
         OBFUSCATE("SmallTextView_<b><font color='#00FFFF'>──── CHAMS MODES ────</font></b>"),
-
-        // --- Chams Mode slider ---
         OBFUSCATE("120_SeekBar_Chams Mode_0_7"),
-        OBFUSCATE("SmallTextView_<b><font color='#AAAAAA'>0</font></b>=OFF  <b>1</b>=Default  <b>2</b>=Shading  <b>3</b>=Wireframe"),
-        OBFUSCATE("SmallTextView_<b><font color='#AAAAAA'>4</font></b>=Outline  <b>5</b>=Vis-Outline  <b>6</b>=Vis-Shading  <b>7</b>=Full"),
+        OBFUSCATE("SmallTextView_<b>0</b>=OFF  <b>1</b>=Solid  <b>2</b>=Wall X-Ray ★  <b>3</b>=Wall+Outline"),
+        OBFUSCATE("SmallTextView_<b>4</b>=Wireframe  <b>5</b>=Full Skeleton  <b>6</b>=Glow  <b>7</b>=X-Ray Wire"),
+        OBFUSCATE("SmallTextView_<b><font color='#3DDB87'>★ Mode 2 = best for train wall detection</font></b>"),
 
-        // --- Shader preset ---
-        OBFUSCATE("SmallTextView_<b><font color='#00FFFF'>──── SHADER PRESET ────</font></b>"),
-        OBFUSCATE("123_SeekBar_Shader Preset_0_5"),
-        OBFUSCATE("SmallTextView_<b>0</b>=_Displacement  <b>1</b>=_MainTex  <b>2</b>=_MainTex_ST"),
-        OBFUSCATE("SmallTextView_<b>3</b>=_Color  <b>4</b>=_Mask  <b>5</b>=_TextureSampleAdd"),
-        OBFUSCATE("SmallTextView_<b><font color='#3DDB87'>★ Best: _Displacement (only trains)</font></b>"),
-
-        // --- Color preset ---
-        OBFUSCATE("SmallTextView_<b><font color='#00FFFF'>──── COLOR PRESET ────</font></b>"),
+        OBFUSCATE("SmallTextView_<b><font color='#00FFFF'>──── COLOR PRESETS ────</font></b>"),
         OBFUSCATE("125_SeekBar_Color Preset_0_5"),
-        OBFUSCATE("SmallTextView_<b>0</b>=Cyan/Magenta  <b>1</b>=Lime/Red  <b>2</b>=Blue/Orange"),
-        OBFUSCATE("SmallTextView_<b>3</b>=Purple/Gold  <b>4</b>=White/Red  <b>5</b>=Stealth"),
+        OBFUSCATE("SmallTextView_<b>0</b>=Neon Green/Red ★  <b>1</b>=Cyan/Magenta  <b>2</b>=Yellow/Blue"),
+        OBFUSCATE("SmallTextView_<b>3</b>=Orange/Purple  <b>4</b>=White/Red  <b>5</b>=Stealth"),
 
-        // --- Rainbow toggles ---
         OBFUSCATE("SmallTextView_<b><font color='#00FFFF'>──── RGB ANIMATION ────</font></b>"),
         OBFUSCATE("121_Toggle_Rainbow Visible Color"),
         OBFUSCATE("122_Toggle_Rainbow In-Wall Color"),
         OBFUSCATE("SmallTextView_<b><font color='#FFBB33'>Tip:</font></b> Rainbow overrides color preset."),
 
-        // --- Dump ---
         OBFUSCATE("SmallTextView_<b><font color='#00FFFF'>──── DIAGNOSTICS ────</font></b>"),
         OBFUSCATE("124_Toggle_Dump Shader List to File"),
         OBFUSCATE("SmallTextView_<b><font color='#AAAAAA'>File: /sdcard/Documents/Shaders.txt</font></b>"),
@@ -370,10 +358,6 @@ void Changes(JNIEnv*, jclass, jobject,
         case 122: {
             enableRainbowWall = boolean;
             LOGD(OBFUSCATE("Rainbow In-Wall = %d"), (int)boolean);
-        } break;
-
-        case 123: {
-            setShaderPreset(value);
         } break;
 
         case 124: {
