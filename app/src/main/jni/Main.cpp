@@ -3,7 +3,7 @@
 // Auto-Update Hook System  (32bit + 64bit)
 // ----------------------------------------------------------------
 // ★ Null-guarded hooks — crash-proof
-// ★ 4টি Slider (Jump Limit / Jump Height / Power Duration / Score Multiplier)
+// ★ 5টি Slider/Feature Set (Jump Limit / Jump Height / Power Duration / Score Multiplier / Collider)
 // ★ User-friendly feature names
 // ================================================================
 
@@ -35,6 +35,7 @@ static std::atomic<int>  g_ScoreMultiplier  {0};       // 107 (0-999)
 static std::atomic<bool> g_NoCollision      {false};   // 108
 static std::atomic<bool> g_FreeShopping     {false};   // 109
 static std::atomic<bool> g_UnlimitedCoins   {false};   // 110
+static std::atomic<bool> g_ColliderEnable   {false};   // 111  ← NEW
 
 // ================================================================
 //                     ORIGINAL FUNCTION POINTERS
@@ -50,6 +51,7 @@ static int   (*old_get_BaseMultiplierSum)(...)  = nullptr;
 static bool  (*old_get_detectCollisions)(...)   = nullptr;
 static bool  (*old_get_IsIAP)(...)              = nullptr;
 static int   (*old_GetCurrency)(...)            = nullptr;
+static bool  (*old_get_ColliderEnable)(...)     = nullptr;   // NEW
 
 // ================================================================
 //                       HOOK IMPLEMENTATIONS
@@ -134,6 +136,13 @@ static int new_GetCurrency(void* self, int currencyType) {
     return old_GetCurrency ? old_GetCurrency(self, currencyType) : 0;
 }
 
+// --- SYBO.RunnerCore.Character.CharacterCollision  (NEW) ---
+static bool new_get_ColliderEnable(void* self) {
+    if (!self) return false;
+    if (g_ColliderEnable.load()) return false;        // disable collider when toggle ON
+    return old_get_ColliderEnable ? old_get_ColliderEnable(self) : true;
+}
+
 // ================================================================
 //                       HACK THREAD
 // ================================================================
@@ -180,6 +189,21 @@ void* hack_thread(void*) {
                  (void*)oJumpLim, (void*)oJumpH, (void*)oLane);
         } else {
             LOGD(OBFUSCATE("CharacterMotorAbilities class not found — skipped"));
+        }
+    }
+
+    // ------------------------------------------------------------
+    //  SYBO.RunnerCore.Character.CharacterCollision  (NEW)
+    // ------------------------------------------------------------
+    {
+        auto CColl = new LoadClass(OBFUSCATE("SYBO.RunnerCore.Character"),
+                                   OBFUSCATE("CharacterCollision"));
+        if (CColl && CColl->thisclass) {
+            DWORD oCollEn = CColl->GetMethodOffsetByName(OBFUSCATE("get_ColliderEnable"), 0);
+            if (oCollEn) HOOK_AU((void*)oCollEn, (void*)new_get_ColliderEnable, old_get_ColliderEnable);
+            LOGD(OBFUSCATE("CharacterCollision hook: ColliderEnable=%p"), (void*)oCollEn);
+        } else {
+            LOGD(OBFUSCATE("CharacterCollision class not found — skipped"));
         }
     }
 
@@ -329,6 +353,7 @@ jobjectArray GetFeatureList(JNIEnv* env, jobject) {
         OBFUSCATE("Category_Collisions"),
 
         OBFUSCATE("108_Toggle_No Collision Detect"),
+        OBFUSCATE("111_Toggle_Disable Character Collider"),   // NEW
 
         // ========================================================
         //  Shop — Currency / IAP
@@ -374,6 +399,7 @@ void Changes(JNIEnv*, jclass, jobject,
         case 108: g_NoCollision.store(boolean);       break;
         case 109: g_FreeShopping.store(boolean);      break;
         case 110: g_UnlimitedCoins.store(boolean);    break;
+        case 111: g_ColliderEnable.store(boolean);    break;   // NEW
 
         // --------------------------------------------------------
         //  800 — Simple Mode
@@ -393,6 +419,7 @@ void Changes(JNIEnv*, jclass, jobject,
                 g_ScoreMultiplier.store(0);
                 g_NoCollision.store(false);
                 g_FreeShopping.store(false);
+                g_ColliderEnable.store(false);          // NEW
             } else {
                 g_FrontalImpact.store(false);
                 g_SideImpact.store(false);
@@ -421,6 +448,7 @@ void Changes(JNIEnv*, jclass, jobject,
                 // Risky features OFF
                 g_NoCollision.store(false);
                 g_FreeShopping.store(false);
+                g_ColliderEnable.store(false);          // NEW
             } else {
                 // Only advanced sliders OFF
                 g_JumpLimit.store(0);
@@ -445,6 +473,7 @@ void Changes(JNIEnv*, jclass, jobject,
                 g_UnlimitedCoins.store(true);
                 g_NoCollision.store(true);
                 g_FreeShopping.store(true);
+                g_ColliderEnable.store(true);           // NEW
                 g_JumpLimit.store(999);
                 g_JumpHeight.store(200);
                 g_PowerDuration.store(999);
@@ -458,6 +487,7 @@ void Changes(JNIEnv*, jclass, jobject,
                 g_UnlimitedCoins.store(false);
                 g_NoCollision.store(false);
                 g_FreeShopping.store(false);
+                g_ColliderEnable.store(false);          // NEW
                 g_JumpLimit.store(0);
                 g_JumpHeight.store(0);
                 g_PowerDuration.store(0);
@@ -477,6 +507,7 @@ void Changes(JNIEnv*, jclass, jobject,
             g_UnlimitedCoins.store(false);
             g_NoCollision.store(false);
             g_FreeShopping.store(false);
+            g_ColliderEnable.store(false);                  // NEW
             g_JumpLimit.store(0);
             g_JumpHeight.store(0);
             g_PowerDuration.store(0);
