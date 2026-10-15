@@ -120,7 +120,7 @@ static void fileLog(const char* level, const char* fmt, ...) {
 //  Static state
 // ================================================================
 static void *handle = nullptr;
-static const char* shaderName = "_MainTex";
+static const char* shaderName = "_Displacement";
 static bool enableWallhack = false;
 static bool enableWallhackW = false;
 static bool enableWallhackG = false;
