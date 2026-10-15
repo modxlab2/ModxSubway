@@ -1,10 +1,6 @@
 // ================================================================
 // ModX Lab — Subway Surfers (Unity / IL2CPP)
-// Auto-Update Hook System + ZEFF Chams Integration
-// ----------------------------------------------------------------
-// ★ Null-guarded gameplay hooks — crash-proof
-// ★ No Collision Detect — 1 second window auto-release
-// ★ Chams (ZEFF) — 8 modes + shader discovery + RGB
+// Auto-Update Hook System + ZEFF Chams (Professional)
 // ================================================================
 
 #include "Includes.h"
@@ -19,7 +15,6 @@
 #include <chrono>
 #include <atomic>
 
-// ★ Chams (ZEFF) — pulls in RGB.h and ImGui::ImVec4
 #include "Chams.h"
 
 #define LIB OBFUSCATE("libil2cpp.so")
@@ -27,19 +22,18 @@
 // ================================================================
 //   FEATURE STATE — Gameplay
 // ================================================================
-static std::atomic<bool> g_FrontalImpact    {false};   // 100
-static std::atomic<bool> g_SideImpact       {false};   // 101
-static std::atomic<int>  g_JumpLimit        {0};       // 102
-static std::atomic<int>  g_JumpHeight       {0};       // 103
-static std::atomic<bool> g_AutoRevive       {false};   // 104
-static std::atomic<int>  g_PowerDuration    {0};       // 105
-static std::atomic<bool> g_FastLaneChange   {false};   // 106
-static std::atomic<int>  g_ScoreMultiplier  {0};       // 107
-static std::atomic<bool> g_NoCollision      {false};   // 108
-static std::atomic<bool> g_FreeShopping     {false};   // 109
-static std::atomic<bool> g_UnlimitedCoins   {false};   // 110
+static std::atomic<bool> g_FrontalImpact    {false};
+static std::atomic<bool> g_SideImpact       {false};
+static std::atomic<int>  g_JumpLimit        {0};
+static std::atomic<int>  g_JumpHeight       {0};
+static std::atomic<bool> g_AutoRevive       {false};
+static std::atomic<int>  g_PowerDuration    {0};
+static std::atomic<bool> g_FastLaneChange   {false};
+static std::atomic<int>  g_ScoreMultiplier  {0};
+static std::atomic<bool> g_NoCollision      {false};
+static std::atomic<bool> g_FreeShopping     {false};
+static std::atomic<bool> g_UnlimitedCoins   {false};
 
-// No-Collision 1-second window timestamp
 static std::atomic<long long> g_NoCollisionStartMs {0};
 
 static inline long long now_ms() {
@@ -117,7 +111,6 @@ static int new_get_BaseMultiplierSum(void* self) {
     return old_get_BaseMultiplierSum ? old_get_BaseMultiplierSum(self) : 0;
 }
 
-// --- No Collision Detect (1-second window) ---
 static bool new_get_detectCollisions(void* self) {
     if (!self) return true;
     if (g_NoCollision.load()) {
@@ -147,9 +140,8 @@ static int new_GetCurrency(void* self, int currencyType) {
 // ================================================================
 void* hack_thread(void*) {
     do { sleep(1); } while (!isLibraryLoaded(LIB));
-
     sleep(3);
-    LOGD(OBFUSCATE("il2cpp loaded — installing auto-update hooks"));
+    LOGD(OBFUSCATE("il2cpp loaded — installing hooks"));
 
     // ---- CharacterMotor ----
     {
@@ -231,9 +223,7 @@ void* hack_thread(void*) {
         }
     }
 
-    // ------------------------------------------------------------
-    //  ★ Chams (ZEFF) — GLES2 hooks
-    // ------------------------------------------------------------
+    // ---- ★ Chams ----
     RenderHook();
 
     LOGD(OBFUSCATE("All auto-update hooks installed — ready"));
@@ -252,7 +242,6 @@ jobjectArray GetFeatureList(JNIEnv* env, jobject) {
         OBFUSCATE("801_ButtonOnOff_Max Mode"),
         OBFUSCATE("802_ButtonOnOff_Ultra Max Mode"),
         OBFUSCATE("803_ButtonOnOff_None (Reset)"),
-
         OBFUSCATE("SmallTextView_<b><font color='#3DDB87'>Simple:</font></b> Basic Safety + Coins"),
         OBFUSCATE("SmallTextView_<b><font color='#3DDB87'>Max:</font></b> Simple + Jump, Power, Score"),
         OBFUSCATE("SmallTextView_<b><font color='#3DDB87'>Ultra:</font></b> Max + No Collision, Free Shop"),
@@ -278,24 +267,49 @@ jobjectArray GetFeatureList(JNIEnv* env, jobject) {
         // ---------- Collisions ----------
         OBFUSCATE("Category_Collisions"),
         OBFUSCATE("108_Toggle_No Collision Detect"),
-        OBFUSCATE("SmallTextView_<b><font color='#FF4444'>⚠ Turn ON before game starts — otherwise it won't work</font></b>"),
+        OBFUSCATE("SmallTextView_<b><font color='#FF4444'>⚠ Turn ON before game starts</font></b>"),
 
         // ---------- Shop ----------
         OBFUSCATE("Category_Shop"),
         OBFUSCATE("109_Toggle_Free Shopping (IAP)"),
         OBFUSCATE("110_Toggle_Unlimited Coins"),
 
-        // ---------- ★ Chams (ZEFF) ----------
+        // ============================================================
+        //  ★ CHAMS TAB  — fresh & clean
+        // ============================================================
         OBFUSCATE("Category_Chams"),
-        OBFUSCATE("SmallTextView_<b><font color='#3DDB87'>Chams Modes:</font></b> 0=OFF, 1=Default, 2=Shading, 3=Wireframe, 4=Outline, 5=VisOutline, 6=VisShading, 7=VisShading+Outline"),
-        OBFUSCATE("120_SeekBar_Chams Mode (0=OFF)_0_7"),
+
+        // --- Header ---
+        OBFUSCATE("SmallTextView_<b><font color='#00FFFF'>──── CHAMS MODES ────</font></b>"),
+
+        // --- Chams Mode slider ---
+        OBFUSCATE("120_SeekBar_Chams Mode_0_7"),
+        OBFUSCATE("SmallTextView_<b><font color='#AAAAAA'>0</font></b>=OFF  <b>1</b>=Default  <b>2</b>=Shading  <b>3</b>=Wireframe"),
+        OBFUSCATE("SmallTextView_<b><font color='#AAAAAA'>4</font></b>=Outline  <b>5</b>=Vis-Outline  <b>6</b>=Vis-Shading  <b>7</b>=Full"),
+
+        // --- Shader preset ---
+        OBFUSCATE("SmallTextView_<b><font color='#00FFFF'>──── SHADER PRESET ────</font></b>"),
+        OBFUSCATE("123_SeekBar_Shader Preset_0_5"),
+        OBFUSCATE("SmallTextView_<b>0</b>=_Displacement  <b>1</b>=_MainTex  <b>2</b>=_MainTex_ST"),
+        OBFUSCATE("SmallTextView_<b>3</b>=_Color  <b>4</b>=_Mask  <b>5</b>=_TextureSampleAdd"),
+        OBFUSCATE("SmallTextView_<b><font color='#3DDB87'>★ Best: _Displacement (only trains)</font></b>"),
+
+        // --- Color preset ---
+        OBFUSCATE("SmallTextView_<b><font color='#00FFFF'>──── COLOR PRESET ────</font></b>"),
+        OBFUSCATE("125_SeekBar_Color Preset_0_5"),
+        OBFUSCATE("SmallTextView_<b>0</b>=Cyan/Magenta  <b>1</b>=Lime/Red  <b>2</b>=Blue/Orange"),
+        OBFUSCATE("SmallTextView_<b>3</b>=Purple/Gold  <b>4</b>=White/Red  <b>5</b>=Stealth"),
+
+        // --- Rainbow toggles ---
+        OBFUSCATE("SmallTextView_<b><font color='#00FFFF'>──── RGB ANIMATION ────</font></b>"),
         OBFUSCATE("121_Toggle_Rainbow Visible Color"),
         OBFUSCATE("122_Toggle_Rainbow In-Wall Color"),
-        OBFUSCATE("SmallTextView_<b><font color='#3DDB87'>Shader Presets:</font></b> 0=unity_SHC, 1=_MainTex, 2=_Displacement, 3=_Color, 4=_BaseMap, 5=_Albedo"),
-        OBFUSCATE("123_SeekBar_Shader Preset_0_5"),
+        OBFUSCATE("SmallTextView_<b><font color='#FFBB33'>Tip:</font></b> Rainbow overrides color preset."),
+
+        // --- Dump ---
+        OBFUSCATE("SmallTextView_<b><font color='#00FFFF'>──── DIAGNOSTICS ────</font></b>"),
         OBFUSCATE("124_Toggle_Dump Shader List to File"),
-        OBFUSCATE("SmallTextView_<b><font color='#FFBB33'>Tip:</font></b> Enable Dump, play 10s, then open /sdcard/Documents/Shaders.txt"),
-        OBFUSCATE("SmallTextView_<b><font color='#FF4444'>⚠ If environment colors wrong → change shader preset</font></b>"),
+        OBFUSCATE("SmallTextView_<b><font color='#AAAAAA'>File: /sdcard/Documents/Shaders.txt</font></b>"),
     };
 
     int n = (int)(sizeof(features) / sizeof(features[0]));
@@ -319,7 +333,6 @@ void Changes(JNIEnv*, jclass, jobject,
 
     switch (featNum) {
 
-        // ---------- Gameplay ----------
         case 100: g_FrontalImpact.store(boolean);     break;
         case 101: g_SideImpact.store(boolean);        break;
         case 102: g_JumpLimit.store(value);           break;
@@ -333,7 +346,7 @@ void Changes(JNIEnv*, jclass, jobject,
             g_NoCollision.store(boolean);
             if (boolean) {
                 g_NoCollisionStartMs.store(now_ms());
-                LOGD(OBFUSCATE("No Collision Detect: ON — 1s window started"));
+                LOGD(OBFUSCATE("No Collision Detect: ON — 1s window"));
             } else {
                 g_NoCollisionStartMs.store(0);
                 LOGD(OBFUSCATE("No Collision Detect: OFF"));
@@ -343,39 +356,35 @@ void Changes(JNIEnv*, jclass, jobject,
         case 109: g_FreeShopping.store(boolean);      break;
         case 110: g_UnlimitedCoins.store(boolean);    break;
 
-        // ---------- ★ Chams (ZEFF) ----------
+        // ---------- ★ Chams ----------
         case 120: {
-            chamsint = value;   // 0-7
+            chamsint = value;
             LOGD(OBFUSCATE("Chams mode = %d"), value);
         } break;
 
         case 121: {
             enableRainbow = boolean;
-            LOGD(OBFUSCATE("Rainbow Visible: %d"), (int)boolean);
+            LOGD(OBFUSCATE("Rainbow Visible = %d"), (int)boolean);
         } break;
 
         case 122: {
             enableRainbowWall = boolean;
-            LOGD(OBFUSCATE("Rainbow In-Wall: %d"), (int)boolean);
+            LOGD(OBFUSCATE("Rainbow In-Wall = %d"), (int)boolean);
         } break;
 
         case 123: {
-            // Shader preset selector
-            const char* presets[] = {
-                "unity_SHC", "_MainTex", "_Displacement",
-                "_Color", "_BaseMap", "_Albedo"
-            };
-            if (value >= 0 && value <= 5) {
-                mineShader = presets[value];
-                LOGD(OBFUSCATE("Shader set to: %s"), presets[value]);
-            }
+            setShaderPreset(value);
         } break;
 
         case 124: {
             if (boolean) {
                 dumpShadersToFile();
-                LOGD(OBFUSCATE("Shader list dumped to %s"), isDumpLocation);
+                LOGD(OBFUSCATE("Shader list dumped"));
             }
+        } break;
+
+        case 125: {
+            setColorPreset(value);
         } break;
 
         // ---------- Simple Mode ----------
@@ -425,7 +434,7 @@ void Changes(JNIEnv*, jclass, jobject,
             }
         } break;
 
-        // ---------- Ultra Max Mode ----------
+        // ---------- Ultra Max ----------
         case 802: {
             if (boolean) {
                 g_FrontalImpact.store(true);

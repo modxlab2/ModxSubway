@@ -11,11 +11,7 @@
 #include <cstring>
 #include <ctime>
 #include <android/log.h>
-
-// GL includes
 #include <GLES2/gl2.h>
-
-// RGB animation source
 #include "RGB.h"
 
 // ================================================================
@@ -34,7 +30,7 @@
 using namespace std;
 
 // ================================================================
-//  Lightweight Vec4  (replaces ImVec4 — no ImGui needed)
+//  Lightweight Vec4 (no ImGui)
 // ================================================================
 struct Vec4 {
     float x, y, z, w;
@@ -50,15 +46,72 @@ struct Vec4 {
 // ================================================================
 static void *handle = nullptr;
 std::vector<std::string> shaders;
-std::string mineShader = "unity_SHC";
 int chamsint = 0;
 
-// RGB toggles (controlled from Main.cpp)
+// ★ DEFAULT SHADER: _Displacement (works reliably on Subway Surfers)
+std::string mineShader = "_Displacement";
+
+// ----------------------------------------------------------------
+//  Shader presets — only shaders KNOWN to work in Subway Surfers
+// ----------------------------------------------------------------
+struct ShaderPreset {
+    const char* name;
+    const char* shader;
+};
+static const ShaderPreset kShaderPresets[] = {
+    { "_Displacement",     "_Displacement"     },  // 0 ★ BEST — only trains
+    { "_MainTex",          "_MainTex"          },  // 1 universal
+    { "_MainTex_ST",       "_MainTex_ST"       },  // 2 texture + scale
+    { "_Color",            "_Color"            },  // 3 color-tinted
+    { "_Mask",             "_Mask"             },  // 4 some trains
+    { "_TextureSampleAdd", "_TextureSampleAdd" },  // 5 UI/textures
+};
+static const int kShaderPresetCount = sizeof(kShaderPresets) / sizeof(kShaderPresets[0]);
+
+// ----------------------------------------------------------------
+//  ★ Professional Color Presets
+// ----------------------------------------------------------------
+struct ColorPreset {
+    const char* name;
+    Vec4 visible;
+    Vec4 inWall;
+};
+static const ColorPreset kColorPresets[] = {
+    // name                visible (r,g,b,a)          inWall (r,g,b,a)
+    { "Cyan / Magenta",   {0.00f, 1.00f, 1.00f, 1.0f}, {1.00f, 0.00f, 0.60f, 1.0f} },
+    { "Lime / Red",       {0.30f, 1.00f, 0.30f, 1.0f}, {1.00f, 0.15f, 0.15f, 1.0f} },
+    { "Blue / Orange",    {0.20f, 0.50f, 1.00f, 1.0f}, {1.00f, 0.55f, 0.10f, 1.0f} },
+    { "Purple / Gold",    {0.70f, 0.30f, 1.00f, 1.0f}, {1.00f, 0.85f, 0.20f, 1.0f} },
+    { "White / Red",      {1.00f, 1.00f, 1.00f, 1.0f}, {1.00f, 0.00f, 0.00f, 1.0f} },
+    { "Stealth (Black)",  {0.10f, 0.10f, 0.10f, 1.0f}, {1.00f, 0.00f, 0.00f, 1.0f} },
+};
+static const int kColorPresetCount = sizeof(kColorPresets) / sizeof(kColorPresets[0]);
+
+// RGB toggles
 bool enableRainbow     = false;
 bool enableRainbowWall = false;
 
-Vec4 inWallColor  = Vec4(1.0f, 0.0f, 0.0f, 1.0f);
-Vec4 visibleColor = Vec4(0.0f, 1.0f, 0.0f, 1.0f);
+// ★ Default: professional cyan/magenta scheme
+Vec4 inWallColor  = Vec4(1.00f, 0.00f, 0.60f, 1.0f);
+Vec4 visibleColor = Vec4(0.00f, 1.00f, 1.00f, 1.0f);
+
+// ----------------------------------------------------------------
+//  Shader preset / color preset setter (called from Main.cpp)
+// ----------------------------------------------------------------
+void setShaderPreset(int idx) {
+    if (idx < 0 || idx >= kShaderPresetCount) return;
+    mineShader = kShaderPresets[idx].shader;
+    CHAMS_LOGI("Shader preset -> %s", kShaderPresets[idx].name);
+}
+
+void setColorPreset(int idx) {
+    if (idx < 0 || idx >= kColorPresetCount) return;
+    visibleColor = kColorPresets[idx].visible;
+    inWallColor  = kColorPresets[idx].inWall;
+    enableRainbow     = false;
+    enableRainbowWall = false;
+    CHAMS_LOGI("Color preset -> %s", kColorPresets[idx].name);
+}
 
 // GL function pointers
 void (*p_glGetIntegerv)(unsigned int, int *)            = nullptr;
@@ -74,12 +127,12 @@ void (*p_glCullFace)(unsigned int)                      = nullptr;
 const char *isDumpLocation = "/sdcard/Documents/Shaders.txt";
 
 // ================================================================
-//  Dump shader list to file
+//  Dump shader list
 // ================================================================
 void dumpShadersToFile() {
     std::ofstream f(isDumpLocation, std::ios::out | std::ios::trunc);
     if (!f.is_open()) {
-        CHAMS_LOGI("Failed to open %s for writing", isDumpLocation);
+        CHAMS_LOGI("Failed to open %s", isDumpLocation);
         return;
     }
     time_t now = time(nullptr);
@@ -87,15 +140,13 @@ void dumpShadersToFile() {
     strftime(tb, sizeof(tb), "%Y-%m-%d %H:%M:%S", localtime(&now));
     f << "=== Shader List @ " << tb << " ===\n";
     f << "Total: " << shaders.size() << " shaders\n\n";
-    for (const auto& s : shaders) {
-        f << s << "\n";
-    }
+    for (const auto& s : shaders) f << s << "\n";
     f.close();
     CHAMS_LOGI("Dumped %zu shaders to %s", shaders.size(), isDumpLocation);
 }
 
 // ================================================================
-//  glGetUniformLocation hook — discovers shader names
+//  glGetUniformLocation hook
 // ================================================================
 int (*old_glGetUniformLocation)(unsigned int, const char *) = nullptr;
 int new_glGetUniformLocation(unsigned int program, const char *name) {
@@ -111,35 +162,29 @@ int new_glGetUniformLocation(unsigned int program, const char *name) {
 }
 
 // ================================================================
-//  glDrawElements hook — all chams logic (ZEFF original)
+//  glDrawElements hook — all chams modes
 // ================================================================
 void (*old_glDrawElements)(unsigned int, int, unsigned int, const void *) = nullptr;
 void new_glDrawElements(unsigned int mode, int count, unsigned int type, const void *indices) {
 
-    // Early-out filters
     if (mode != GL_TRIANGLES)              return old_glDrawElements(mode, count, type, indices);
     if (count < 2000)                       return old_glDrawElements(mode, count, type, indices);
 
-    // Skip if already blending (UI / transparent layers)
     unsigned char blend = 0;
     p_glGetBooleanv(GL_BLEND, &blend);
     if (blend)                              return old_glDrawElements(mode, count, type, indices);
 
-    // Skip if depth test off (2D overlays)
     unsigned char depthTest = 0;
     p_glGetBooleanv(GL_DEPTH_TEST, &depthTest);
     if (!depthTest)                         return old_glDrawElements(mode, count, type, indices);
 
-    // Match shader
     int currProgram = 0;
     p_glGetIntegerv(GL_CURRENT_PROGRAM, &currProgram);
     int shader = old_glGetUniformLocation(currProgram, mineShader.c_str());
     if (shader == -1)                       return old_glDrawElements(mode, count, type, indices);
 
-    // Chams mode
     if (chamsint == 0)                      return old_glDrawElements(mode, count, type, indices);
 
-    // ---- RGB animation update ----
     if (enableRainbow) {
         visibleColor.x = redd / 255.0f;
         visibleColor.y = greenn / 255.0f;
@@ -152,11 +197,13 @@ void new_glDrawElements(unsigned int mode, int count, unsigned int type, const v
     }
     performRGBChange();
 
+    // Mode 1 — Default shading (Z-range tweak only)
     if (chamsint == 1) {
         p_glDepthRangef(1, 0.5);
         old_glDrawElements(mode, count, type, indices);
     }
 
+    // Mode 2 — Shading (visible-color overlay)
     if (chamsint == 2) {
         old_glDrawElements(mode, count, type, indices);
         p_glDepthRangef(1, 0.5);
@@ -166,6 +213,7 @@ void new_glDrawElements(unsigned int mode, int count, unsigned int type, const v
         old_glDrawElements(mode, count, type, indices);
     }
 
+    // Mode 3 — Wireframe
     if (chamsint == 3) {
         old_glDrawElements(mode, count, type, indices);
         p_glDepthRangef(1, 0.5);
@@ -176,6 +224,7 @@ void new_glDrawElements(unsigned int mode, int count, unsigned int type, const v
         old_glDrawElements(GL_LINES, count, type, indices);
     }
 
+    // Mode 4 — Outline (black shell + colored lines)
     if (chamsint == 4) {
         old_glDrawElements(mode, count, type, indices);
         p_glDepthRangef(1, 0);
@@ -189,6 +238,7 @@ void new_glDrawElements(unsigned int mode, int count, unsigned int type, const v
         old_glDrawElements(GL_LINES, count, type, indices);
     }
 
+    // Mode 5 — Visibility-check outline
     if (chamsint == 5) {
         p_glEnable(GL_BLEND);
         p_glBlendFunc(GL_CONSTANT_COLOR, GL_CONSTANT_ALPHA);
@@ -202,6 +252,7 @@ void new_glDrawElements(unsigned int mode, int count, unsigned int type, const v
         old_glDrawElements(mode, count, type, indices);
     }
 
+    // Mode 6 — Visibility-check shading (in-wall + visible)
     if (chamsint == 6) {
         p_glDisable(GL_DEPTH_TEST);
         p_glEnable(GL_BLEND);
@@ -214,6 +265,7 @@ void new_glDrawElements(unsigned int mode, int count, unsigned int type, const v
         old_glDrawElements(mode, count, type, indices);
     }
 
+    // Mode 7 — Visibility-check shading + outline
     if (chamsint == 7) {
         p_glDisable(GL_DEPTH_TEST);
         p_glEnable(GL_BLEND);
@@ -240,17 +292,13 @@ void new_glDrawElements(unsigned int mode, int count, unsigned int type, const v
 }
 
 // ================================================================
-//  Setup hooks (call once from hack_thread)
+//  Setup hooks
 // ================================================================
 void RenderHook() {
     if (!handle) handle = dlopen("libGLESv2.so", RTLD_LAZY);
-    if (!handle) {
-        CHAMS_LOGI("dlopen libGLESv2.so FAILED");
-        return;
-    }
+    if (!handle) { CHAMS_LOGI("dlopen libGLESv2.so FAILED"); return; }
     CHAMS_LOGI("libGLESv2.so loaded OK");
 
-    // Load GL function pointers first
     p_glGetIntegerv  = (void (*)(unsigned int, int *))            dlsym(handle, "glGetIntegerv");
     p_glGetBooleanv  = (void (*)(unsigned int, unsigned char *))  dlsym(handle, "glGetBooleanv");
     p_glDepthRangef  = (void (*)(float, float))                   dlsym(handle, "glDepthRangef");
@@ -261,21 +309,16 @@ void RenderHook() {
     p_glDisable      = (void (*)(unsigned int))                   dlsym(handle, "glDisable");
     p_glCullFace     = (void (*)(unsigned int))                   dlsym(handle, "glCullFace");
 
-    CHAMS_LOGI("GL ptrs: getIntegerv=%p getBooleanv=%p depthRangef=%p",
-               p_glGetIntegerv, p_glGetBooleanv, p_glDepthRangef);
-
-    // Hook glGetUniformLocation
     void *pGet = dlsym(handle, "glGetUniformLocation");
     if (pGet) {
         HOOK_FN(pGet, (void*)new_glGetUniformLocation, (void**)&old_glGetUniformLocation);
-        CHAMS_LOGI("glGetUniformLocation hooked @ %p", pGet);
+        CHAMS_LOGI("glGetUniformLocation hooked");
     }
 
-    // Hook glDrawElements
     void *pDraw = dlsym(handle, "glDrawElements");
     if (pDraw) {
         HOOK_FN(pDraw, (void*)new_glDrawElements, (void**)&old_glDrawElements);
-        CHAMS_LOGI("glDrawElements hooked @ %p", pDraw);
+        CHAMS_LOGI("glDrawElements hooked");
     }
 
     CHAMS_LOGI("Chams hooks installed — shader=%s", mineShader.c_str());
