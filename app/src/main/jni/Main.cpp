@@ -1,11 +1,11 @@
 // ================================================================
 // ModX Lab — Subway Surfers (Unity / IL2CPP)
-// Auto-Update Hook System + Chams (Wallhack / Wireframe / Glow /
-// Outline / Rainbow / RGB)
+// Auto-Update Hook System + Chams + File Logging
 // ----------------------------------------------------------------
 // ★ Null-guarded hooks — crash-proof
 // ★ No Collision Detect — 1 second window auto-release
-// ★ Chams (GLES2 glDrawElements / glGetUniformLocation)
+// ★ Chams (Wallhack / Wireframe / Glow / Outline / Rainbow / RGB)
+// ★ Log saved to: /sdcard/Documents/ChamsLog.txt
 // ================================================================
 
 #include "Includes.h"
@@ -20,8 +20,7 @@
 #include <chrono>
 #include <atomic>
 
-// ★ Chams (this pulls in RGB.h — don't include RGB.h anywhere else!)
-#include "Chams.h"
+#include "Chams.h"       // ★ pulls in RGB.h too
 
 #define LIB OBFUSCATE("libil2cpp.so")
 
@@ -49,6 +48,7 @@ static std::atomic<bool> g_ChamsGlow        {false};   // 114
 static std::atomic<bool> g_ChamsOutline     {false};   // 115
 static std::atomic<bool> g_ChamsRainbow     {false};   // 116
 static std::atomic<bool> g_ChamsRGB         {false};   // 117
+static std::atomic<bool> g_ChamsDiagnostic  {false};   // 118
 
 // No-Collision 1-second window timestamp
 static std::atomic<long long> g_NoCollisionStartMs {0};
@@ -128,18 +128,14 @@ static int new_get_BaseMultiplierSum(void* self) {
     return old_get_BaseMultiplierSum ? old_get_BaseMultiplierSum(self) : 0;
 }
 
-// --- UnityEngine.CharacterController  (No Collision Detect) ---
 static bool new_get_detectCollisions(void* self) {
     if (!self) return true;
     if (g_NoCollision.load()) {
         long long start = g_NoCollisionStartMs.load();
         if (start > 0) {
             long long elapsed = now_ms() - start;
-            if (elapsed >= 0 && elapsed < 1000) {
-                return false;         // 1-second active window
-            }
+            if (elapsed >= 0 && elapsed < 1000) return false;
         }
-        // After 1 second → auto off (menu toggle still ON)
     }
     return old_get_detectCollisions ? old_get_detectCollisions(self) : true;
 }
@@ -167,9 +163,7 @@ void* hack_thread(void*) {
     sleep(3);
     LOGD(OBFUSCATE("il2cpp loaded — installing auto-update hooks"));
 
-    // ------------------------------------------------------------
-    //  SYBO.RunnerCore.Character.CharacterMotor
-    // ------------------------------------------------------------
+    // ---- CharacterMotor ----
     {
         auto CM = new LoadClass(OBFUSCATE("SYBO.RunnerCore.Character"),
                                 OBFUSCATE("CharacterMotor"));
@@ -185,9 +179,7 @@ void* hack_thread(void*) {
         }
     }
 
-    // ------------------------------------------------------------
-    //  SYBO.RunnerCore.Character.CharacterMotorAbilities
-    // ------------------------------------------------------------
+    // ---- CharacterMotorAbilities ----
     {
         auto CMA = new LoadClass(OBFUSCATE("SYBO.RunnerCore.Character"),
                                  OBFUSCATE("CharacterMotorAbilities"));
@@ -205,9 +197,7 @@ void* hack_thread(void*) {
         }
     }
 
-    // ------------------------------------------------------------
-    //  SYBO.Subway.StumbleBehaviour
-    // ------------------------------------------------------------
+    // ---- StumbleBehaviour ----
     {
         auto SB = new LoadClass(OBFUSCATE("SYBO.Subway"),
                                 OBFUSCATE("StumbleBehaviour"));
@@ -220,9 +210,7 @@ void* hack_thread(void*) {
         }
     }
 
-    // ------------------------------------------------------------
-    //  SYBO.RunnerCore.Powers.PowerConfig
-    // ------------------------------------------------------------
+    // ---- PowerConfig ----
     {
         auto PC = new LoadClass(OBFUSCATE("SYBO.RunnerCore.Powers"),
                                 OBFUSCATE("PowerConfig"));
@@ -235,9 +223,7 @@ void* hack_thread(void*) {
         }
     }
 
-    // ------------------------------------------------------------
-    //  SYBO.Subway.ScoreMultiplierManager
-    // ------------------------------------------------------------
+    // ---- ScoreMultiplierManager ----
     {
         auto SMM = new LoadClass(OBFUSCATE("SYBO.Subway"),
                                  OBFUSCATE("ScoreMultiplierManager"));
@@ -250,9 +236,7 @@ void* hack_thread(void*) {
         }
     }
 
-    // ------------------------------------------------------------
-    //  UnityEngine.CharacterController  (No Collision Detect)
-    // ------------------------------------------------------------
+    // ---- CharacterController ----
     {
         auto CC = new LoadClass(OBFUSCATE("UnityEngine"),
                                 OBFUSCATE("CharacterController"));
@@ -265,9 +249,7 @@ void* hack_thread(void*) {
         }
     }
 
-    // ------------------------------------------------------------
-    //  SYBO.Subway.Core.CommonData.Currency
-    // ------------------------------------------------------------
+    // ---- Currency ----
     {
         auto CUR = new LoadClass(OBFUSCATE("SYBO.Subway.Core.CommonData"),
                                  OBFUSCATE("Currency"));
@@ -280,9 +262,7 @@ void* hack_thread(void*) {
         }
     }
 
-    // ------------------------------------------------------------
-    //  SYBO.Subway.Core.ProfileData.WalletModel
-    // ------------------------------------------------------------
+    // ---- WalletModel ----
     {
         auto WM = new LoadClass(OBFUSCATE("SYBO.Subway.Core.ProfileData"),
                                 OBFUSCATE("WalletModel"));
@@ -296,16 +276,17 @@ void* hack_thread(void*) {
     }
 
     // ------------------------------------------------------------
-    //  ★ Chams — GLES2 hooks  (libGLESv2.so)
+    //  ★ Chams — GLES2 hooks
     // ------------------------------------------------------------
     if (mlovinit()) {
-        // Default shader uniform name (Subway Surfers main material texture)
         setShader("_MainTex");
-        LogShaders();   // hook glGetUniformLocation
-        Wallhack();     // hook glDrawElements
-        LOGD(OBFUSCATE("Chams GLES hooks installed (shader=_MainTex)"));
+        SetDiagnostic(false);
+        LogShaders();
+        Wallhack();
+        LOGI("Chams init complete — shader=_MainTex, minCount=%d", kMinVertexCount);
+        LOGI("Log saved to: %s", g_LogPath[0] ? g_LogPath : "(no file)");
     } else {
-        LOGD(OBFUSCATE("libGLESv2.so not found — Chams skipped"));
+        LOGE("Chams init FAILED — libGLESv2.so not found");
     }
 
     LOGD(OBFUSCATE("All auto-update hooks installed — ready"));
@@ -319,7 +300,6 @@ jobjectArray GetFeatureList(JNIEnv* env, jobject) {
     jobjectArray ret;
     const char* features[] = {
 
-        // ---------- Mode Presets ----------
         OBFUSCATE("800_ButtonOnOff_Simple Mode"),
         OBFUSCATE("801_ButtonOnOff_Max Mode"),
         OBFUSCATE("802_ButtonOnOff_Ultra Max Mode"),
@@ -330,7 +310,6 @@ jobjectArray GetFeatureList(JNIEnv* env, jobject) {
         OBFUSCATE("SmallTextView_<b><font color='#3DDB87'>Ultra:</font></b> Max + No Collision, Free Shop"),
         OBFUSCATE("SmallTextView_<b><font color='#FFBB33'>None:</font></b> Reset all features"),
 
-        // ---------- Runner ----------
         OBFUSCATE("Category_Runner"),
         OBFUSCATE("100_Toggle_No Head-On Collision"),
         OBFUSCATE("101_Toggle_No Side Collision"),
@@ -338,26 +317,22 @@ jobjectArray GetFeatureList(JNIEnv* env, jobject) {
         OBFUSCATE("103_SeekBar_Jump Height_0_200"),
         OBFUSCATE("104_Toggle_Auto Revive"),
 
-        // ---------- Powers ----------
         OBFUSCATE("Category_Powers"),
         OBFUSCATE("105_SeekBar_Power Duration_0_999"),
         OBFUSCATE("106_Toggle_Fast Lane Change"),
 
-        // ---------- Score ----------
         OBFUSCATE("Category_Score"),
         OBFUSCATE("107_SeekBar_Score Multiplier_0_999"),
 
-        // ---------- Collisions ----------
         OBFUSCATE("Category_Collisions"),
         OBFUSCATE("108_Toggle_No Collision Detect"),
         OBFUSCATE("SmallTextView_<b><font color='#FF4444'>⚠ Turn ON before game starts — otherwise it won't work</font></b>"),
 
-        // ---------- Shop ----------
         OBFUSCATE("Category_Shop"),
         OBFUSCATE("109_Toggle_Free Shopping (IAP)"),
         OBFUSCATE("110_Toggle_Unlimited Coins"),
 
-        // ---------- ★ Chams ----------
+        // ★ Chams
         OBFUSCATE("Category_Chams"),
         OBFUSCATE("112_Toggle_Wallhack (Chams)"),
         OBFUSCATE("113_Toggle_Wireframe"),
@@ -366,6 +341,8 @@ jobjectArray GetFeatureList(JNIEnv* env, jobject) {
         OBFUSCATE("116_Toggle_Rainbow Color"),
         OBFUSCATE("117_Toggle_RGB Color"),
         OBFUSCATE("SmallTextView_<b><font color='#FFBB33'>Tip:</font></b> Rainbow / RGB override static colors."),
+        OBFUSCATE("SmallTextView_<b><font color='#FFBB33'>Diagnostic:</font></b> Saves shader list to /sdcard/Documents/ChamsLog.txt"),
+        OBFUSCATE("118_Toggle_Diagnostic Mode (Log file)"),
     };
 
     int n = (int)(sizeof(features) / sizeof(features[0]));
@@ -389,7 +366,6 @@ void Changes(JNIEnv*, jclass, jobject,
 
     switch (featNum) {
 
-        // ---------- Gameplay ----------
         case 100: g_FrontalImpact.store(boolean);     break;
         case 101: g_SideImpact.store(boolean);        break;
         case 102: g_JumpLimit.store(value);           break;
@@ -399,7 +375,6 @@ void Changes(JNIEnv*, jclass, jobject,
         case 106: g_FastLaneChange.store(boolean);    break;
         case 107: g_ScoreMultiplier.store(value);     break;
 
-        // ---------- No Collision Detect (1s window) ----------
         case 108: {
             g_NoCollision.store(boolean);
             if (boolean) {
@@ -414,15 +389,15 @@ void Changes(JNIEnv*, jclass, jobject,
         case 109: g_FreeShopping.store(boolean);      break;
         case 110: g_UnlimitedCoins.store(boolean);    break;
 
-        // ---------- ★ Chams ----------
-        case 112: g_ChamsWallhack.store(boolean);  SetWallhack(boolean);  break;
-        case 113: g_ChamsWireframe.store(boolean); SetWireframe(boolean); break;
-        case 114: g_ChamsGlow.store(boolean);      SetGlow(boolean);      break;
-        case 115: g_ChamsOutline.store(boolean);   SetOutline(boolean);   break;
-        case 116: g_ChamsRainbow.store(boolean);   SetRainbow(boolean);   break;
-        case 117: g_ChamsRGB.store(boolean);       SetRGB(boolean);       break;
+        case 112: g_ChamsWallhack.store(boolean);  SetWallhack(boolean);   break;
+        case 113: g_ChamsWireframe.store(boolean); SetWireframe(boolean);  break;
+        case 114: g_ChamsGlow.store(boolean);      SetGlow(boolean);       break;
+        case 115: g_ChamsOutline.store(boolean);   SetOutline(boolean);    break;
+        case 116: g_ChamsRainbow.store(boolean);   SetRainbow(boolean);    break;
+        case 117: g_ChamsRGB.store(boolean);       SetRGB(boolean);        break;
+        case 118: g_ChamsDiagnostic.store(boolean);SetDiagnostic(boolean); break;
 
-        // ---------- 800 — Simple Mode ----------
+        // ---- Simple Mode ----
         case 800: {
             if (boolean) {
                 g_FrontalImpact.store(true);
@@ -446,7 +421,7 @@ void Changes(JNIEnv*, jclass, jobject,
             LOGD(OBFUSCATE("MODE: Simple = %d"), (int)boolean);
         } break;
 
-        // ---------- 801 — Max Mode ----------
+        // ---- Max Mode ----
         case 801: {
             if (boolean) {
                 g_FrontalImpact.store(true);
@@ -471,7 +446,7 @@ void Changes(JNIEnv*, jclass, jobject,
             LOGD(OBFUSCATE("MODE: Max = %d"), (int)boolean);
         } break;
 
-        // ---------- 802 — Ultra Max Mode ----------
+        // ---- Ultra Max Mode ----
         case 802: {
             if (boolean) {
                 g_FrontalImpact.store(true);
@@ -503,7 +478,7 @@ void Changes(JNIEnv*, jclass, jobject,
             LOGD(OBFUSCATE("MODE: UltraMax = %d"), (int)boolean);
         } break;
 
-        // ---------- 803 — None (Reset) ----------
+        // ---- None (Reset) ----
         case 803: {
             g_FrontalImpact.store(false);
             g_SideImpact.store(false);
@@ -526,7 +501,7 @@ void Changes(JNIEnv*, jclass, jobject,
 }
 
 // ================================================================
-//     STUBS — Menu.java (UnsatisfiedLinkError প্রতিরোধ)
+//     STUBS
 // ================================================================
 extern "C" JNIEXPORT void JNICALL
 Java_com_android_support_Menu_Draw(JNIEnv*, jclass, jobject, jobject) { }
