@@ -1,11 +1,10 @@
 // ================================================================
 // ModX Lab — Subway Surfers (Unity / IL2CPP)
-// Auto-Update Hook System + Chams + File Logging
+// Auto-Update Hook System + ZEFF Chams Integration
 // ----------------------------------------------------------------
-// ★ Null-guarded hooks — crash-proof
+// ★ Null-guarded gameplay hooks — crash-proof
 // ★ No Collision Detect — 1 second window auto-release
-// ★ Chams (Wallhack / Wireframe / Glow / Outline / Rainbow / RGB)
-// ★ Log saved to: /sdcard/Documents/ChamsLog.txt
+// ★ Chams (ZEFF) — 8 modes + shader discovery + RGB
 // ================================================================
 
 #include "Includes.h"
@@ -20,7 +19,8 @@
 #include <chrono>
 #include <atomic>
 
-#include "Chams.h"       // ★ pulls in RGB.h too
+// ★ Chams (ZEFF) — pulls in RGB.h and ImGui::ImVec4
+#include "Chams.h"
 
 #define LIB OBFUSCATE("libil2cpp.so")
 
@@ -38,17 +38,6 @@ static std::atomic<int>  g_ScoreMultiplier  {0};       // 107
 static std::atomic<bool> g_NoCollision      {false};   // 108
 static std::atomic<bool> g_FreeShopping     {false};   // 109
 static std::atomic<bool> g_UnlimitedCoins   {false};   // 110
-
-// ================================================================
-//   FEATURE STATE — Chams
-// ================================================================
-static std::atomic<bool> g_ChamsWallhack    {false};   // 112
-static std::atomic<bool> g_ChamsWireframe   {false};   // 113
-static std::atomic<bool> g_ChamsGlow        {false};   // 114
-static std::atomic<bool> g_ChamsOutline     {false};   // 115
-static std::atomic<bool> g_ChamsRainbow     {false};   // 116
-static std::atomic<bool> g_ChamsRGB         {false};   // 117
-static std::atomic<bool> g_ChamsDiagnostic  {false};   // 118
 
 // No-Collision 1-second window timestamp
 static std::atomic<long long> g_NoCollisionStartMs {0};
@@ -128,6 +117,7 @@ static int new_get_BaseMultiplierSum(void* self) {
     return old_get_BaseMultiplierSum ? old_get_BaseMultiplierSum(self) : 0;
 }
 
+// --- No Collision Detect (1-second window) ---
 static bool new_get_detectCollisions(void* self) {
     if (!self) return true;
     if (g_NoCollision.load()) {
@@ -156,9 +146,7 @@ static int new_GetCurrency(void* self, int currencyType) {
 //                       HACK THREAD
 // ================================================================
 void* hack_thread(void*) {
-    do {
-        sleep(1);
-    } while (!isLibraryLoaded(LIB));
+    do { sleep(1); } while (!isLibraryLoaded(LIB));
 
     sleep(3);
     LOGD(OBFUSCATE("il2cpp loaded — installing auto-update hooks"));
@@ -172,10 +160,6 @@ void* hack_thread(void*) {
             DWORD oSide    = CM->GetMethodOffsetByName(OBFUSCATE("CheckSideImpact"),    1);
             if (oFrontal) HOOK_AU((void*)oFrontal, (void*)new_CheckFrontalImpact, old_CheckFrontalImpact);
             if (oSide)    HOOK_AU((void*)oSide,    (void*)new_CheckSideImpact,    old_CheckSideImpact);
-            LOGD(OBFUSCATE("CharacterMotor hooks: frontal=%p side=%p"),
-                 (void*)oFrontal, (void*)oSide);
-        } else {
-            LOGD(OBFUSCATE("CharacterMotor class not found — skipped"));
         }
     }
 
@@ -190,104 +174,67 @@ void* hack_thread(void*) {
             if (oJumpLim) HOOK_AU((void*)oJumpLim, (void*)new_get_JumpLimit,          old_get_JumpLimit);
             if (oJumpH)   HOOK_AU((void*)oJumpH,   (void*)new_get_JumpHeight,         old_get_JumpHeight);
             if (oLane)    HOOK_AU((void*)oLane,    (void*)new_get_LaneChangeDuration, old_get_LaneChangeDuration);
-            LOGD(OBFUSCATE("Abilities hooks: jl=%p jh=%p lc=%p"),
-                 (void*)oJumpLim, (void*)oJumpH, (void*)oLane);
-        } else {
-            LOGD(OBFUSCATE("CharacterMotorAbilities class not found — skipped"));
         }
     }
 
     // ---- StumbleBehaviour ----
     {
-        auto SB = new LoadClass(OBFUSCATE("SYBO.Subway"),
-                                OBFUSCATE("StumbleBehaviour"));
+        auto SB = new LoadClass(OBFUSCATE("SYBO.Subway"), OBFUSCATE("StumbleBehaviour"));
         if (SB && SB->thisclass) {
             DWORD oRevive = SB->GetMethodOffsetByName(OBFUSCATE("IsAutoReviveEnabled"), 0);
             if (oRevive) HOOK_AU((void*)oRevive, (void*)new_IsAutoReviveEnabled, old_IsAutoReviveEnabled);
-            LOGD(OBFUSCATE("StumbleBehaviour hook: %p"), (void*)oRevive);
-        } else {
-            LOGD(OBFUSCATE("StumbleBehaviour class not found — skipped"));
         }
     }
 
     // ---- PowerConfig ----
     {
-        auto PC = new LoadClass(OBFUSCATE("SYBO.RunnerCore.Powers"),
-                                OBFUSCATE("PowerConfig"));
+        auto PC = new LoadClass(OBFUSCATE("SYBO.RunnerCore.Powers"), OBFUSCATE("PowerConfig"));
         if (PC && PC->thisclass) {
             DWORD oDur = PC->GetMethodOffsetByName(OBFUSCATE("GetDuration"), 1);
             if (oDur) HOOK_AU((void*)oDur, (void*)new_GetDuration, old_GetDuration);
-            LOGD(OBFUSCATE("PowerConfig hook: %p"), (void*)oDur);
-        } else {
-            LOGD(OBFUSCATE("PowerConfig class not found — skipped"));
         }
     }
 
     // ---- ScoreMultiplierManager ----
     {
-        auto SMM = new LoadClass(OBFUSCATE("SYBO.Subway"),
-                                 OBFUSCATE("ScoreMultiplierManager"));
+        auto SMM = new LoadClass(OBFUSCATE("SYBO.Subway"), OBFUSCATE("ScoreMultiplierManager"));
         if (SMM && SMM->thisclass) {
             DWORD oBase = SMM->GetMethodOffsetByName(OBFUSCATE("get_BaseMultiplierSum"), 0);
             if (oBase) HOOK_AU((void*)oBase, (void*)new_get_BaseMultiplierSum, old_get_BaseMultiplierSum);
-            LOGD(OBFUSCATE("ScoreMultiplier hook: %p"), (void*)oBase);
-        } else {
-            LOGD(OBFUSCATE("ScoreMultiplierManager class not found — skipped"));
         }
     }
 
     // ---- CharacterController ----
     {
-        auto CC = new LoadClass(OBFUSCATE("UnityEngine"),
-                                OBFUSCATE("CharacterController"));
+        auto CC = new LoadClass(OBFUSCATE("UnityEngine"), OBFUSCATE("CharacterController"));
         if (CC && CC->thisclass) {
             DWORD oDetect = CC->GetMethodOffsetByName(OBFUSCATE("get_detectCollisions"), 0);
             if (oDetect) HOOK_AU((void*)oDetect, (void*)new_get_detectCollisions, old_get_detectCollisions);
-            LOGD(OBFUSCATE("CharacterController hook: %p"), (void*)oDetect);
-        } else {
-            LOGD(OBFUSCATE("CharacterController class not found — skipped"));
         }
     }
 
     // ---- Currency ----
     {
-        auto CUR = new LoadClass(OBFUSCATE("SYBO.Subway.Core.CommonData"),
-                                 OBFUSCATE("Currency"));
+        auto CUR = new LoadClass(OBFUSCATE("SYBO.Subway.Core.CommonData"), OBFUSCATE("Currency"));
         if (CUR && CUR->thisclass) {
             DWORD oIAP = CUR->GetMethodOffsetByName(OBFUSCATE("get_IsIAP"), 0);
             if (oIAP) HOOK_AU((void*)oIAP, (void*)new_get_IsIAP, old_get_IsIAP);
-            LOGD(OBFUSCATE("Currency hook: %p"), (void*)oIAP);
-        } else {
-            LOGD(OBFUSCATE("Currency class not found — skipped"));
         }
     }
 
     // ---- WalletModel ----
     {
-        auto WM = new LoadClass(OBFUSCATE("SYBO.Subway.Core.ProfileData"),
-                                OBFUSCATE("WalletModel"));
+        auto WM = new LoadClass(OBFUSCATE("SYBO.Subway.Core.ProfileData"), OBFUSCATE("WalletModel"));
         if (WM && WM->thisclass) {
             DWORD oGetCur = WM->GetMethodOffsetByName(OBFUSCATE("GetCurrency"), 1);
             if (oGetCur) HOOK_AU((void*)oGetCur, (void*)new_GetCurrency, old_GetCurrency);
-            LOGD(OBFUSCATE("WalletModel hook: %p"), (void*)oGetCur);
-        } else {
-            LOGD(OBFUSCATE("WalletModel class not found — skipped"));
         }
     }
 
     // ------------------------------------------------------------
-    //  ★ Chams — GLES2 hooks
+    //  ★ Chams (ZEFF) — GLES2 hooks
     // ------------------------------------------------------------
-    if (mlovinit()) {
-        setShader("_MainTex");
-        SetDiagnostic(false);
-        LogShaders();
-        Wallhack();
-        LOGI("Chams init complete — shader=_MainTex, minCount=%d", kMinVertexCount);
-        LOGI("Log saved to: %s", g_LogPath[0] ? g_LogPath : "(no file)");
-    } else {
-        LOGE("Chams init FAILED — libGLESv2.so not found");
-    }
+    RenderHook();
 
     LOGD(OBFUSCATE("All auto-update hooks installed — ready"));
     return nullptr;
@@ -300,6 +247,7 @@ jobjectArray GetFeatureList(JNIEnv* env, jobject) {
     jobjectArray ret;
     const char* features[] = {
 
+        // ---------- Mode Presets ----------
         OBFUSCATE("800_ButtonOnOff_Simple Mode"),
         OBFUSCATE("801_ButtonOnOff_Max Mode"),
         OBFUSCATE("802_ButtonOnOff_Ultra Max Mode"),
@@ -310,6 +258,7 @@ jobjectArray GetFeatureList(JNIEnv* env, jobject) {
         OBFUSCATE("SmallTextView_<b><font color='#3DDB87'>Ultra:</font></b> Max + No Collision, Free Shop"),
         OBFUSCATE("SmallTextView_<b><font color='#FFBB33'>None:</font></b> Reset all features"),
 
+        // ---------- Runner ----------
         OBFUSCATE("Category_Runner"),
         OBFUSCATE("100_Toggle_No Head-On Collision"),
         OBFUSCATE("101_Toggle_No Side Collision"),
@@ -317,32 +266,36 @@ jobjectArray GetFeatureList(JNIEnv* env, jobject) {
         OBFUSCATE("103_SeekBar_Jump Height_0_200"),
         OBFUSCATE("104_Toggle_Auto Revive"),
 
+        // ---------- Powers ----------
         OBFUSCATE("Category_Powers"),
         OBFUSCATE("105_SeekBar_Power Duration_0_999"),
         OBFUSCATE("106_Toggle_Fast Lane Change"),
 
+        // ---------- Score ----------
         OBFUSCATE("Category_Score"),
         OBFUSCATE("107_SeekBar_Score Multiplier_0_999"),
 
+        // ---------- Collisions ----------
         OBFUSCATE("Category_Collisions"),
         OBFUSCATE("108_Toggle_No Collision Detect"),
         OBFUSCATE("SmallTextView_<b><font color='#FF4444'>⚠ Turn ON before game starts — otherwise it won't work</font></b>"),
 
+        // ---------- Shop ----------
         OBFUSCATE("Category_Shop"),
         OBFUSCATE("109_Toggle_Free Shopping (IAP)"),
         OBFUSCATE("110_Toggle_Unlimited Coins"),
 
-        // ★ Chams
+        // ---------- ★ Chams (ZEFF) ----------
         OBFUSCATE("Category_Chams"),
-        OBFUSCATE("112_Toggle_Wallhack (Chams)"),
-        OBFUSCATE("113_Toggle_Wireframe"),
-        OBFUSCATE("114_Toggle_Glow"),
-        OBFUSCATE("115_Toggle_Outline"),
-        OBFUSCATE("116_Toggle_Rainbow Color"),
-        OBFUSCATE("117_Toggle_RGB Color"),
-        OBFUSCATE("SmallTextView_<b><font color='#FFBB33'>Tip:</font></b> Rainbow / RGB override static colors."),
-        OBFUSCATE("SmallTextView_<b><font color='#FFBB33'>Diagnostic:</font></b> Saves shader list to /sdcard/Documents/ChamsLog.txt"),
-        OBFUSCATE("118_Toggle_Diagnostic Mode (Log file)"),
+        OBFUSCATE("SmallTextView_<b><font color='#3DDB87'>Chams Modes:</font></b> 0=OFF, 1=Default, 2=Shading, 3=Wireframe, 4=Outline, 5=VisOutline, 6=VisShading, 7=VisShading+Outline"),
+        OBFUSCATE("120_SeekBar_Chams Mode (0=OFF)_0_7"),
+        OBFUSCATE("121_Toggle_Rainbow Visible Color"),
+        OBFUSCATE("122_Toggle_Rainbow In-Wall Color"),
+        OBFUSCATE("SmallTextView_<b><font color='#3DDB87'>Shader Presets:</font></b> 0=unity_SHC, 1=_MainTex, 2=_Displacement, 3=_Color, 4=_BaseMap, 5=_Albedo"),
+        OBFUSCATE("123_SeekBar_Shader Preset_0_5"),
+        OBFUSCATE("124_Toggle_Dump Shader List to File"),
+        OBFUSCATE("SmallTextView_<b><font color='#FFBB33'>Tip:</font></b> Enable Dump, play 10s, then open /sdcard/Documents/Shaders.txt"),
+        OBFUSCATE("SmallTextView_<b><font color='#FF4444'>⚠ If environment colors wrong → change shader preset</font></b>"),
     };
 
     int n = (int)(sizeof(features) / sizeof(features[0]));
@@ -366,6 +319,7 @@ void Changes(JNIEnv*, jclass, jobject,
 
     switch (featNum) {
 
+        // ---------- Gameplay ----------
         case 100: g_FrontalImpact.store(boolean);     break;
         case 101: g_SideImpact.store(boolean);        break;
         case 102: g_JumpLimit.store(value);           break;
@@ -389,15 +343,42 @@ void Changes(JNIEnv*, jclass, jobject,
         case 109: g_FreeShopping.store(boolean);      break;
         case 110: g_UnlimitedCoins.store(boolean);    break;
 
-        case 112: g_ChamsWallhack.store(boolean);  SetWallhack(boolean);   break;
-        case 113: g_ChamsWireframe.store(boolean); SetWireframe(boolean);  break;
-        case 114: g_ChamsGlow.store(boolean);      SetGlow(boolean);       break;
-        case 115: g_ChamsOutline.store(boolean);   SetOutline(boolean);    break;
-        case 116: g_ChamsRainbow.store(boolean);   SetRainbow(boolean);    break;
-        case 117: g_ChamsRGB.store(boolean);       SetRGB(boolean);        break;
-        case 118: g_ChamsDiagnostic.store(boolean);SetDiagnostic(boolean); break;
+        // ---------- ★ Chams (ZEFF) ----------
+        case 120: {
+            chamsint = value;   // 0-7
+            LOGD(OBFUSCATE("Chams mode = %d"), value);
+        } break;
 
-        // ---- Simple Mode ----
+        case 121: {
+            enableRainbow = boolean;
+            LOGD(OBFUSCATE("Rainbow Visible: %d"), (int)boolean);
+        } break;
+
+        case 122: {
+            enableRainbowWall = boolean;
+            LOGD(OBFUSCATE("Rainbow In-Wall: %d"), (int)boolean);
+        } break;
+
+        case 123: {
+            // Shader preset selector
+            const char* presets[] = {
+                "unity_SHC", "_MainTex", "_Displacement",
+                "_Color", "_BaseMap", "_Albedo"
+            };
+            if (value >= 0 && value <= 5) {
+                mineShader = presets[value];
+                LOGD(OBFUSCATE("Shader set to: %s"), presets[value]);
+            }
+        } break;
+
+        case 124: {
+            if (boolean) {
+                dumpShadersToFile();
+                LOGD(OBFUSCATE("Shader list dumped to %s"), isDumpLocation);
+            }
+        } break;
+
+        // ---------- Simple Mode ----------
         case 800: {
             if (boolean) {
                 g_FrontalImpact.store(true);
@@ -418,10 +399,9 @@ void Changes(JNIEnv*, jclass, jobject,
                 g_AutoRevive.store(false);
                 g_UnlimitedCoins.store(false);
             }
-            LOGD(OBFUSCATE("MODE: Simple = %d"), (int)boolean);
         } break;
 
-        // ---- Max Mode ----
+        // ---------- Max Mode ----------
         case 801: {
             if (boolean) {
                 g_FrontalImpact.store(true);
@@ -443,10 +423,9 @@ void Changes(JNIEnv*, jclass, jobject,
                 g_FastLaneChange.store(false);
                 g_ScoreMultiplier.store(0);
             }
-            LOGD(OBFUSCATE("MODE: Max = %d"), (int)boolean);
         } break;
 
-        // ---- Ultra Max Mode ----
+        // ---------- Ultra Max Mode ----------
         case 802: {
             if (boolean) {
                 g_FrontalImpact.store(true);
@@ -475,10 +454,9 @@ void Changes(JNIEnv*, jclass, jobject,
                 g_PowerDuration.store(0);
                 g_ScoreMultiplier.store(0);
             }
-            LOGD(OBFUSCATE("MODE: UltraMax = %d"), (int)boolean);
         } break;
 
-        // ---- None (Reset) ----
+        // ---------- None (Reset) ----------
         case 803: {
             g_FrontalImpact.store(false);
             g_SideImpact.store(false);
@@ -492,7 +470,6 @@ void Changes(JNIEnv*, jclass, jobject,
             g_JumpHeight.store(0);
             g_PowerDuration.store(0);
             g_ScoreMultiplier.store(0);
-            LOGD(OBFUSCATE("MODE: None = %d"), (int)boolean);
         } break;
 
         default:

@@ -1,17 +1,25 @@
-#ifndef NORKA_CHAMS
-#define NORKA_CHAMS
+#ifndef ZEFF_CHAMS
+#define ZEFF_CHAMS
 
-#include <GLES2/gl2.h>
-#include <GLES2/gl2ext.h>
 #include <dlfcn.h>
-#include <android/log.h>
-#include <cstdio>
-#include <cstdarg>
-#include <ctime>
-#include <pthread.h>
-#include <sys/stat.h>
-#include <unistd.h>
+#include <array>
+#include <fstream>
+#include <sstream>
+#include <vector>
+#include <iostream>
 #include <string>
+#include <cstring>
+#include <ctime>
+#include <android/log.h>
+
+// ImGui for ImVec4
+#include "ImGui/imgui.h"
+
+// GL includes
+#include <GLES2/gl2.h>
+
+// RGB animation source
+#include "RGB.h"
 
 // ================================================================
 //  Architecture-aware hook selection
@@ -26,322 +34,245 @@
         MSHookFunction((void*)(addr), (void*)(replace), (void**)(orig))
 #endif
 
-#include "RGB.h"
+using namespace std;
+
+#define CHAMS_TAG "CHAMS"
+#define CHAMS_LOGI(...) __android_log_print(ANDROID_LOG_INFO,  CHAMS_TAG, __VA_ARGS__)
 
 // ================================================================
-//  ⚙️ TUNABLE PARAMETERS
-// ================================================================
-static const int kMinVertexCount = 3000;
-
-static bool g_DiagnosticMode = false;
-
-// ================================================================
-//  📁 FILE LOGGER  →  /sdcard/Documents/ChamsLog.txt
-// ================================================================
-static FILE*          g_LogFile        = nullptr;
-static pthread_mutex_t g_LogMutex      = PTHREAD_MUTEX_INITIALIZER;
-static char           g_LogPath[256]   = {0};
-
-// ---------------------------------------------------------------
-//  Try several candidate paths, open the first writable one
-// ---------------------------------------------------------------
-static void openLogFile() {
-    if (g_LogFile) return;
-
-    const char* candidates[] = {
-        "/sdcard/Documents/ChamsLog.txt",
-        "/storage/emulated/0/Documents/ChamsLog.txt",
-        "/sdcard/Android/data/com.kiloo.subwaysurf/files/ChamsLog.txt",
-        "/data/local/tmp/ChamsLog.txt"
-    };
-
-    for (auto path : candidates) {
-        // Ensure parent dir exists (only for /sdcard/... which is really /storage/emulated/0)
-        FILE* f = fopen(path, "w");
-        if (f) {
-            g_LogFile = f;
-            strncpy(g_LogPath, path, sizeof(g_LogPath) - 1);
-            // Timestamp header
-            time_t now = time(nullptr);
-            struct tm* tm_info = localtime(&now);
-            char tb[64];
-            strftime(tb, sizeof(tb), "%Y-%m-%d %H:%M:%S", tm_info);
-            fprintf(g_LogFile, "=== Chams Log @ %s ===\n", tb);
-            fflush(g_LogFile);
-            return;
-        }
-    }
-    // Couldn't open any file — silently continue with logcat only
-}
-
-static void closeLogFile() {
-    if (g_LogFile) {
-        pthread_mutex_lock(&g_LogMutex);
-        fprintf(g_LogFile, "\n=== End of log ===\n");
-        fflush(g_LogFile);
-        fclose(g_LogFile);
-        g_LogFile = nullptr;
-        pthread_mutex_unlock(&g_LogMutex);
-    }
-}
-
-// ---------------------------------------------------------------
-//  Dual-output logger: logcat + file
-// ---------------------------------------------------------------
-static void fileLog(const char* level, const char* fmt, ...) {
-    // 1) logcat
-    va_list ap1;
-    va_start(ap1, fmt);
-    __android_log_vprint(ANDROID_LOG_INFO, "CHAMS", fmt, ap1);
-    va_end(ap1);
-
-    // 2) file
-    if (!g_LogFile) return;
-    pthread_mutex_lock(&g_LogMutex);
-    time_t now = time(nullptr);
-    struct tm* tm_info = localtime(&now);
-    char tb[32];
-    strftime(tb, sizeof(tb), "%H:%M:%S", tm_info);
-    fprintf(g_LogFile, "[%s][%s] ", tb, level);
-    va_list ap2;
-    va_start(ap2, fmt);
-    vfprintf(g_LogFile, fmt, ap2);
-    va_end(ap2);
-    fprintf(g_LogFile, "\n");
-    fflush(g_LogFile);      // flush immediately so user sees live
-    pthread_mutex_unlock(&g_LogMutex);
-}
-
-#define LOGI(...) fileLog("I", __VA_ARGS__)
-#define LOGD(...) fileLog("D", __VA_ARGS__)
-#define LOGE(...) fileLog("E", __VA_ARGS__)
-
-// ================================================================
-//  Static state
+//  Global state
 // ================================================================
 static void *handle = nullptr;
-static const char* shaderName = "_Displacement";
-static bool enableWallhack = false;
-static bool enableWallhackW = false;
-static bool enableWallhackG = false;
-static bool enableWallhackO = false;
-static bool enableRainbow = false;
-static bool isRGB = false;
+std::vector<std::string> shaders;
+std::string mineShader = "unity_SHC";
+int chamsint = 0;
 
-static float r = 255.0f;
-static float g = 0.0f;
-static float b = 0.0f;
-static int w1 = 2;
-static float w2 = 2.0f;
-static float w3 = 2.0f;
-static int a = 255;
+// RGB toggles (controlled from Main.cpp)
+bool enableRainbow     = false;
+bool enableRainbowWall = false;
 
-float red  = 0.0f;
-float gren = 0.0f;
-float blue = 0.0f;
-float mi   = 0.0f;
+ImVec4 inWallColor  = ImVec4(1.0f, 0.0f, 0.0f, 1.0f);
+ImVec4 visibleColor = ImVec4(0.0f, 1.0f, 0.0f, 1.0f);
 
-// ----------------------------------------------------------------
-//  Setters / getters
-// ----------------------------------------------------------------
-inline void setShader(const char* s) {
-    handle = dlopen("libGLESv2.so", RTLD_LAZY);
-    shaderName = s;
-    LOGI("Shader name set to: %s", s);
+// GL function pointers
+void (*p_glGetIntegerv)(unsigned int, int *)            = nullptr;
+void (*p_glGetBooleanv)(unsigned int, unsigned char *)  = nullptr;
+void (*p_glDepthRangef)(float, float)                   = nullptr;
+void (*p_glBlendColor)(float, float, float, float)      = nullptr;
+void (*p_glEnable)(unsigned int)                        = nullptr;
+void (*p_glLineWidth)(float)                            = nullptr;
+void (*p_glBlendFunc)(unsigned int, unsigned int)       = nullptr;
+void (*p_glDisable)(unsigned int)                       = nullptr;
+void (*p_glCullFace)(unsigned int)                      = nullptr;
+
+const char *isDumpLocation = "/sdcard/Documents/Shaders.txt";
+
+// ================================================================
+//  Dump shader list to file
+// ================================================================
+void dumpShadersToFile() {
+    std::ofstream f(isDumpLocation, std::ios::out | std::ios::trunc);
+    if (!f.is_open()) {
+        CHAMS_LOGI("Failed to open %s for writing", isDumpLocation);
+        return;
+    }
+    time_t now = time(nullptr);
+    char tb[64];
+    strftime(tb, sizeof(tb), "%Y-%m-%d %H:%M:%S", localtime(&now));
+    f << "=== Shader List @ " << tb << " ===\n";
+    f << "Total: " << shaders.size() << " shaders\n\n";
+    for (const auto& s : shaders) {
+        f << s << "\n";
+    }
+    f.close();
+    CHAMS_LOGI("Dumped %zu shaders to %s", shaders.size(), isDumpLocation);
 }
-inline const char* getShader() { return shaderName; }
 
-inline void SetWallhack(bool e)  { enableWallhack  = e; LOGI("Wallhack: %d", e); }
-inline void SetWireframe(bool e) { enableWallhackW = e; LOGI("Wireframe: %d", e); }
-inline void SetGlow(bool e)      { enableWallhackG = e; LOGI("Glow: %d", e); }
-inline void SetOutline(bool e)   { enableWallhackO = e; LOGI("Outline: %d", e); }
-inline void SetRainbow(bool e)   { enableRainbow   = e; LOGI("Rainbow: %d", e); }
-inline void SetRGB(bool e)       { isRGB           = e; LOGI("RGB: %d", e); }
-inline void SetDiagnostic(bool e){ g_DiagnosticMode = e; LOGI("Diagnostic mode: %d", e); }
-
-inline void SetR(int v) { r = v; }
-inline void SetG(int v) { g = v; }
-inline void SetB(int v) { b = v; }
-inline void SetWireframeWidth(int v) { w1 = v; }
-inline void SetGlowWidth(int v)      { w2 = v; }
-inline void SetOutlineWidth(int v)   { w3 = v; }
-
-inline bool getWallhackEnabled()  { return enableWallhack;  }
-inline bool getWireframeEnabled() { return enableWallhackW; }
-inline bool getGlowEnabled()      { return enableWallhackG; }
-inline bool getOutlineEnabled()   { return enableWallhackO; }
-inline bool getRainbowEnabled()   { return enableRainbow;   }
-inline bool getRGB()              { return isRGB;           }
-
-// ----------------------------------------------------------------
-//  glGetUniformLocation hook
-// ----------------------------------------------------------------
-static GLint (*old_glGetUniformLocation)(GLuint, const GLchar *) = nullptr;
-static GLint new_glGetUniformLocation(GLuint program, const GLchar *name) {
-    if (!old_glGetUniformLocation) return -1;
+// ================================================================
+//  glGetUniformLocation hook — discovers shader names
+// ================================================================
+int (*old_glGetUniformLocation)(unsigned int, const char *) = nullptr;
+int new_glGetUniformLocation(unsigned int program, const char *name) {
+    if (name) {
+        bool isExist = false;
+        std::string thisShader = name;
+        for (const auto& s : shaders) {
+            if (s == thisShader) { isExist = true; break; }
+        }
+        if (!isExist) shaders.push_back(thisShader);
+    }
     return old_glGetUniformLocation(program, name);
 }
 
-// ----------------------------------------------------------------
-//  Diagnostic: check multiple shader names on the current program
-// ----------------------------------------------------------------
-static void diagnoseProgram(GLint prog, GLsizei count) {
-    const char* candidates[] = {
-        "_MainTex", "_BaseMap", "_BaseColor", "_Color", "_Albedo",
-        "_Displacement", "_EmissionMap", "_Metallic", "_BumpMap",
-        "_SpecColor", "_OutlineColor", "_RimColor"
-    };
-    char buf[512] = {0};
-    int  len = 0;
-    for (auto name : candidates) {
-        GLint id = old_glGetUniformLocation(prog, name);
-        if (id != -1) {
-            len += snprintf(buf + len, sizeof(buf) - len, "%s(%d) ", name, id);
-            if (len >= (int)sizeof(buf) - 32) break;
-        }
+// ================================================================
+//  glDrawElements hook — all chams logic (ZEFF original)
+// ================================================================
+void (*old_glDrawElements)(unsigned int, int, unsigned int, const void *) = nullptr;
+void new_glDrawElements(unsigned int mode, int count, unsigned int type, const void *indices) {
+
+    // Early-out filters
+    if (mode != GL_TRIANGLES)              return old_glDrawElements(mode, count, type, indices);
+    if (count < 2000)                       return old_glDrawElements(mode, count, type, indices);
+
+    // Skip if already blending (UI / transparent layers)
+    unsigned char blend = 0;
+    p_glGetBooleanv(GL_BLEND, &blend);
+    if (blend)                              return old_glDrawElements(mode, count, type, indices);
+
+    // Skip if depth test off (2D overlays)
+    unsigned char depthTest = 0;
+    p_glGetBooleanv(GL_DEPTH_TEST, &depthTest);
+    if (!depthTest)                         return old_glDrawElements(mode, count, type, indices);
+
+    // Match shader
+    int currProgram = 0;
+    p_glGetIntegerv(GL_CURRENT_PROGRAM, &currProgram);
+    int shader = old_glGetUniformLocation(currProgram, mineShader.c_str());
+    if (shader == -1)                       return old_glDrawElements(mode, count, type, indices);
+
+    // Chams mode
+    if (chamsint == 0)                      return old_glDrawElements(mode, count, type, indices);
+
+    // ---- RGB animation update ----
+    if (enableRainbow) {
+        visibleColor.x = redd / 255.0f;
+        visibleColor.y = greenn / 255.0f;
+        visibleColor.z = bluee / 255.0f;
     }
-    LOGI("[DIAG] prog=%d count=%d  uniforms: %s", prog, count, buf);
-}
-
-// ----------------------------------------------------------------
-//  glDrawElements hook — all chams logic
-// ----------------------------------------------------------------
-static void (*old_glDrawElements)(GLenum, GLsizei, GLenum, const void *) = nullptr;
-static void new_glDrawElements(GLenum mode, GLsizei count, GLenum type, const void *indices) {
-    if (!old_glDrawElements) return;
-
-    old_glDrawElements(mode, count, type, indices);
-
-    if (mode != GL_TRIANGLES) return;
-
-    // --------------------------------------------
-    //  DIAGNOSTIC MODE
-    // --------------------------------------------
-    if (g_DiagnosticMode && count >= 500) {
-        GLint prog; glGetIntegerv(GL_CURRENT_PROGRAM, &prog);
-        diagnoseProgram(prog, count);
+    if (enableRainbowWall) {
+        inWallColor.x = redd / 255.0f;
+        inWallColor.y = greenn / 255.0f;
+        inWallColor.z = bluee / 255.0f;
     }
+    performRGBChange();
 
-    // --------------------------------------------
-    //  FILTER: only large meshes (trains/obstacles)
-    // --------------------------------------------
-    if (count < kMinVertexCount) return;
-
-    GLint currProgram;
-    glGetIntegerv(GL_CURRENT_PROGRAM, &currProgram);
-    GLint id = old_glGetUniformLocation(currProgram, getShader());
-    if (id == -1) return;
-
-    static GLint lastLoggedProg = -1;
-    if (currProgram != lastLoggedProg) {
-        LOGD("Chams applying → prog=%d count=%d", currProgram, count);
-        lastLoggedProg = currProgram;
+    if (chamsint == 1) {
+        p_glDepthRangef(1, 0.5);
+        old_glDrawElements(mode, count, type, indices);
     }
 
-    if (getWireframeEnabled()) {
-        glDepthRangef(1, 0.0);
-        glEnable(GL_BLEND);
-        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-        glLineWidth(w1);
-        performRGBChange();
-        if (isRGB) glBlendColor(redd * 0.00392f, greenn * 0.00392f, bluee * 0.00392f, 1.0f);
-        else       glBlendColor(GLfloat(r/255), GLfloat(g/255), GLfloat(b/255), 1.0f);
-        glColorMask(1, 1, 1, 1);
-        old_glDrawElements(GL_LINE_LOOP, count, type, indices);
+    if (chamsint == 2) {
+        old_glDrawElements(mode, count, type, indices);
+        p_glDepthRangef(1, 0.5);
+        p_glBlendColor(visibleColor.x, visibleColor.y, visibleColor.z, 1);
+        p_glEnable(GL_BLEND);
+        p_glBlendFunc(GL_ONE, GL_CONSTANT_COLOR);
+        old_glDrawElements(mode, count, type, indices);
     }
 
-    if (getWallhackEnabled()) {
-        glDepthRangef(1, 0.0);
-        glEnable(GL_BLEND);
-        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-        performRGBChange();
-        if (isRGB) glBlendColor(redd * 0.00392f, greenn * 0.00392f, bluee * 0.00392f, 1.0f);
-        else       glBlendColor(GLfloat(r/255), GLfloat(g/255), GLfloat(b/255), 1.0f);
-        glColorMask(1, 1, 1, 1);
-    }
-
-    if (getGlowEnabled()) {
-        glEnable(GL_BLEND);
-        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-        glLineWidth(w2);
-        glDepthRangef(0.5, 1);
-        performRGBChange();
-        if (isRGB) glBlendColor(redd * 0.00392f, greenn * 0.00392f, bluee * 0.00392f, 1.0f);
-        else       glBlendColor(GLfloat(r/255), GLfloat(g/255), GLfloat(b/255), 1.0f);
-        glColorMask(1, 1, 1, 1);
-        old_glDrawElements(GL_LINES, count, type, indices);
-        glBlendColor(1, 1, 1, 1);
-        glDepthRangef(1, 0.0);
-        old_glDrawElements(GL_TRIANGLES, count, type, indices);
-    }
-
-    if (getOutlineEnabled()) {
-        glDepthRangef(1, 0.0);
-        glLineWidth(w3);
-        glEnable(GL_BLEND);
-        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-        performRGBChange();
-        glBlendColor(0, 0, 0, 1);
-        glColorMask(1, 1, 1, 1);
-        old_glDrawElements(GL_TRIANGLES, count, type, indices);
-        if (isRGB) glBlendColor(redd * 0.00392f, greenn * 0.00392f, bluee * 0.00392f, 1.0f);
-        else       glBlendColor(GLfloat(r/255), GLfloat(g/255), GLfloat(b/255), 1.0f);
-        glDepthRangef(1, 0.5);
+    if (chamsint == 3) {
+        old_glDrawElements(mode, count, type, indices);
+        p_glDepthRangef(1, 0.5);
+        p_glBlendColor(visibleColor.x, visibleColor.y, visibleColor.z, 1);
+        p_glEnable(GL_BLEND);
+        p_glBlendFunc(GL_CONSTANT_COLOR, GL_CONSTANT_ALPHA);
+        p_glLineWidth(1);
         old_glDrawElements(GL_LINES, count, type, indices);
     }
 
-    if (getRainbowEnabled()) {
-        if (red == 255) { if (blue == 0) { if (gren != 255) gren += 1.0f; } }
-        if (gren == 255) { if (red != 0) red -= 1.0f; }
-        if (gren == 255) { if (red == 0) { if (blue != 255) blue += 1.0f; } }
-        if (blue == 255) { if (gren == 0) { mi = 1; red += 1.0f; } else { gren -= 1.0f; } }
-        if (mi == 1) { if (red == 255) { if (blue != 0) blue -= 1.0f; } }
-        SetR((int)red); SetG((int)gren); SetB((int)blue);
+    if (chamsint == 4) {
+        old_glDrawElements(mode, count, type, indices);
+        p_glDepthRangef(1, 0);
+        p_glLineWidth(10);
+        p_glEnable(GL_BLEND);
+        p_glBlendFunc(GL_CONSTANT_COLOR, GL_CONSTANT_ALPHA);
+        p_glBlendColor(0, 0, 0, 1);
+        old_glDrawElements(mode, count, type, indices);
+        p_glDepthRangef(1, 0.5);
+        p_glBlendColor(visibleColor.x, visibleColor.y, visibleColor.z, 1);
+        old_glDrawElements(GL_LINES, count, type, indices);
     }
 
-    old_glDrawElements(mode, count, type, indices);
-    glDepthRangef(0.5, 1);
-    glColorMask(1, 1, 1, 1);
-    glDisable(GL_BLEND);
+    if (chamsint == 5) {
+        p_glEnable(GL_BLEND);
+        p_glBlendFunc(GL_CONSTANT_COLOR, GL_CONSTANT_ALPHA);
+        p_glLineWidth(10);
+        p_glBlendColor(visibleColor.x, visibleColor.y, visibleColor.z, 1);
+        p_glDepthRangef(0.5, 1);
+        old_glDrawElements(GL_LINES, count, type, indices);
+        p_glBlendFunc(GL_ONE_MINUS_CONSTANT_COLOR, GL_ONE_MINUS_CONSTANT_ALPHA);
+        p_glBlendColor(0, 0, 0, 1);
+        p_glDepthRangef(1, 0.5);
+        old_glDrawElements(mode, count, type, indices);
+    }
+
+    if (chamsint == 6) {
+        p_glDisable(GL_DEPTH_TEST);
+        p_glEnable(GL_BLEND);
+        p_glBlendFunc(GL_ONE, GL_CONSTANT_COLOR);
+        p_glBlendColor(inWallColor.x, inWallColor.y, inWallColor.z, 1);
+        old_glDrawElements(mode, count, type, indices);
+        p_glEnable(GL_DEPTH_TEST);
+        p_glDepthRangef(0.5, 1);
+        p_glBlendColor(visibleColor.x, visibleColor.y, visibleColor.z, 1);
+        old_glDrawElements(mode, count, type, indices);
+    }
+
+    if (chamsint == 7) {
+        p_glDisable(GL_DEPTH_TEST);
+        p_glEnable(GL_BLEND);
+        p_glBlendFunc(GL_ONE, GL_CONSTANT_COLOR);
+        p_glBlendColor(inWallColor.x, inWallColor.y, inWallColor.z, 1);
+        old_glDrawElements(mode, count, type, indices);
+        p_glEnable(GL_DEPTH_TEST);
+        p_glDepthRangef(0.5, 1);
+        p_glBlendColor(visibleColor.x, visibleColor.y, visibleColor.z, 1);
+        p_glLineWidth(10);
+        old_glDrawElements(GL_LINES, count, type, indices);
+        p_glBlendFunc(GL_ONE_MINUS_CONSTANT_COLOR, GL_ONE_MINUS_CONSTANT_ALPHA);
+        p_glDepthRangef(0.49, 1);
+        p_glBlendColor(0, 0, 0, 1);
+        old_glDrawElements(mode, count, type, indices);
+    }
+
+    // Cleanup
+    p_glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    p_glLineWidth(1);
+    p_glBlendColor(0, 0, 0, 1);
+    p_glDepthRangef(0, 1);
+    p_glDisable(GL_BLEND);
 }
 
-// ----------------------------------------------------------------
-//  Init
-// ----------------------------------------------------------------
-inline bool mlovinit() {
-    openLogFile();          // ★ open file FIRST so we log everything
-    LOGI("=== Chams initialization started ===");
-    if (g_LogPath[0]) LOGI("Log file: %s", g_LogPath);
-    else              LOGI("Log file could not be opened — logcat only");
-
-    handle = dlopen("libGLESv2.so", RTLD_LAZY);
-    if (!handle) { LOGE("dlopen libGLESv2.so FAILED"); return false; }
-    LOGI("libGLESv2.so loaded OK");
-    return true;
-}
-
-inline void LogShaders() {
+// ================================================================
+//  Setup hooks (call once from hack_thread)
+// ================================================================
+void RenderHook() {
     if (!handle) handle = dlopen("libGLESv2.so", RTLD_LAZY);
-    if (!handle) return;
-    void *p = dlsym(handle, "glGetUniformLocation");
-    if (p) {
-        HOOK_FN(p, (void*)new_glGetUniformLocation, (void**)&old_glGetUniformLocation);
-        LOGI("glGetUniformLocation hooked @ %p", p);
-    } else {
-        LOGE("dlsym glGetUniformLocation FAILED");
+    if (!handle) {
+        CHAMS_LOGI("dlopen libGLESv2.so FAILED");
+        return;
     }
-}
+    CHAMS_LOGI("libGLESv2.so loaded OK");
 
-inline void Wallhack() {
-    if (!handle) handle = dlopen("libGLESv2.so", RTLD_LAZY);
-    if (!handle) return;
-    void *p = dlsym(handle, "glDrawElements");
-    if (p) {
-        HOOK_FN(p, (void*)new_glDrawElements, (void**)&old_glDrawElements);
-        LOGI("glDrawElements hooked @ %p", p);
-    } else {
-        LOGE("dlsym glDrawElements FAILED");
+    // Load GL function pointers first
+    p_glGetIntegerv  = (void (*)(unsigned int, int *))            dlsym(handle, "glGetIntegerv");
+    p_glGetBooleanv  = (void (*)(unsigned int, unsigned char *))  dlsym(handle, "glGetBooleanv");
+    p_glDepthRangef  = (void (*)(float, float))                   dlsym(handle, "glDepthRangef");
+    p_glBlendColor   = (void (*)(float, float, float, float))     dlsym(handle, "glBlendColor");
+    p_glEnable       = (void (*)(unsigned int))                   dlsym(handle, "glEnable");
+    p_glLineWidth    = (void (*)(float))                          dlsym(handle, "glLineWidth");
+    p_glBlendFunc    = (void (*)(unsigned int, unsigned int))     dlsym(handle, "glBlendFunc");
+    p_glDisable      = (void (*)(unsigned int))                   dlsym(handle, "glDisable");
+    p_glCullFace     = (void (*)(unsigned int))                   dlsym(handle, "glCullFace");
+
+    CHAMS_LOGI("GL ptrs: getIntegerv=%p getBooleanv=%p depthRangef=%p",
+               p_glGetIntegerv, p_glGetBooleanv, p_glDepthRangef);
+
+    // Hook glGetUniformLocation
+    void *pGet = dlsym(handle, "glGetUniformLocation");
+    if (pGet) {
+        HOOK_FN(pGet, (void*)new_glGetUniformLocation, (void**)&old_glGetUniformLocation);
+        CHAMS_LOGI("glGetUniformLocation hooked @ %p", pGet);
     }
+
+    // Hook glDrawElements
+    void *pDraw = dlsym(handle, "glDrawElements");
+    if (pDraw) {
+        HOOK_FN(pDraw, (void*)new_glDrawElements, (void**)&old_glDrawElements);
+        CHAMS_LOGI("glDrawElements hooked @ %p", pDraw);
+    }
+
+    CHAMS_LOGI("Chams hooks installed — shader=%s", mineShader.c_str());
 }
 
 #endif
