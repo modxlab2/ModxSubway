@@ -5,11 +5,27 @@
 #include <GLES2/gl2ext.h>
 #include <dlfcn.h>
 
-// ★ আপনার project-এ যেভাবে আছে সেই path দিন
-#include "And64InlineHook/And64InlineHook.hpp"
+// ================================================================
+//  Architecture-aware hook selection
+//    • ARM64  → A64HookFunction (And64InlineHook)
+//    • ARM32  → MSHookFunction  (Substrate)
+// ================================================================
+#if defined(__aarch64__)
+    #include "And64InlineHook/And64InlineHook.hpp"
+    #define HOOK_FN(addr, replace, orig) \
+        A64HookFunction((void*)(addr), (void*)(replace), (void**)(orig))
+#else
+    #include "Substrate/SubstrateHook.h"
+    #define HOOK_FN(addr, replace, orig) \
+        MSHookFunction((void*)(addr), (void*)(replace), (void**)(orig))
+#endif
+
 #include "RGB.h"
 
-static void *handle;
+// ----------------------------------------------------------------
+//  Static state
+// ----------------------------------------------------------------
+static void *handle = nullptr;
 static const char* shaderName = "_MainTex";
 static bool enableWallhack = false;
 static bool enableWallhackW = false;
@@ -26,55 +42,59 @@ static float w2 = 2.0f;
 static float w3 = 2.0f;
 static int a = 255;
 
-float red = 0.0f;
+float red  = 0.0f;
 float gren = 0.0f;
 float blue = 0.0f;
-float mi = 0.0f;
+float mi   = 0.0f;
 
+// ----------------------------------------------------------------
+//  Setters / getters
+// ----------------------------------------------------------------
 inline void setShader(const char* s) {
     handle = dlopen("libGLESv2.so", RTLD_LAZY);
     shaderName = s;
 }
 inline const char* getShader() { return shaderName; }
 
-inline void SetWallhack(bool enable) { enableWallhack = enable; }
-inline void SetWireframe(bool enable) { enableWallhackW = enable; }
-inline void SetGlow(bool enable) { enableWallhackG = enable; }
-inline void SetOutline(bool enable) { enableWallhackO = enable; }
-inline void SetRainbow(bool enable) { enableRainbow = enable; }
-inline void SetRGB(bool enable) { isRGB = enable; }
+inline void SetWallhack(bool e)  { enableWallhack  = e; }
+inline void SetWireframe(bool e) { enableWallhackW = e; }
+inline void SetGlow(bool e)      { enableWallhackG = e; }
+inline void SetOutline(bool e)   { enableWallhackO = e; }
+inline void SetRainbow(bool e)   { enableRainbow   = e; }
+inline void SetRGB(bool e)       { isRGB            = e; }
 
-inline void SetR(int set) { r = set; }
-inline void SetG(int set) { g = set; }
-inline void SetB(int set) { b = set; }
-inline void SetWireframeWidth(int set) { w1 = set; }
-inline void SetGlowWidth(int set) { w2 = set; }
-inline void SetOutlineWidth(int set) { w3 = set; }
+inline void SetR(int v) { r = v; }
+inline void SetG(int v) { g = v; }
+inline void SetB(int v) { b = v; }
+inline void SetWireframeWidth(int v) { w1 = v; }
+inline void SetGlowWidth(int v)      { w2 = v; }
+inline void SetOutlineWidth(int v)   { w3 = v; }
 
-inline bool getWallhackEnabled() { return enableWallhack; }
+inline bool getWallhackEnabled()  { return enableWallhack;  }
 inline bool getWireframeEnabled() { return enableWallhackW; }
-inline bool getGlowEnabled() { return enableWallhackG; }
-inline bool getOutlineEnabled() { return enableWallhackO; }
-inline bool getRainbowEnabled() { return enableRainbow; }
-inline bool getRGB() { return isRGB; }
+inline bool getGlowEnabled()      { return enableWallhackG; }
+inline bool getOutlineEnabled()   { return enableWallhackO; }
+inline bool getRainbowEnabled()   { return enableRainbow;   }
+inline bool getRGB()              { return isRGB;           }
 
-// ---------------------------------------------------------------
-//  Hook: glGetUniformLocation
-// ---------------------------------------------------------------
-static int (*old_glGetUniformLocation)(GLuint, const GLchar *) = nullptr;
+// ----------------------------------------------------------------
+//  glGetUniformLocation hook
+// ----------------------------------------------------------------
+static GLint (*old_glGetUniformLocation)(GLuint, const GLchar *) = nullptr;
 static GLint new_glGetUniformLocation(GLuint program, const GLchar *name) {
     if (!old_glGetUniformLocation) return -1;
     return old_glGetUniformLocation(program, name);
 }
 
-// ---------------------------------------------------------------
-//  Hook: glDrawElements
-// ---------------------------------------------------------------
-static void (*old_glDrawElements)(GLenum mode, GLsizei count, GLenum type, const void *indices) = nullptr;
+// ----------------------------------------------------------------
+//  glDrawElements hook — all chams logic
+// ----------------------------------------------------------------
+static void (*old_glDrawElements)(GLenum, GLsizei, GLenum, const void *) = nullptr;
 static void new_glDrawElements(GLenum mode, GLsizei count, GLenum type, const void *indices) {
     if (!old_glDrawElements) return;
 
     old_glDrawElements(mode, count, type, indices);
+
     if (mode != GL_TRIANGLES || count < 500) return;
 
     GLint currProgram;
@@ -149,9 +169,9 @@ static void new_glDrawElements(GLenum mode, GLsizei count, GLenum type, const vo
     glDisable(GL_BLEND);
 }
 
-// ---------------------------------------------------------------
+// ----------------------------------------------------------------
 //  Init
-// ---------------------------------------------------------------
+// ----------------------------------------------------------------
 inline bool mlovinit() {
     handle = dlopen("libGLESv2.so", RTLD_LAZY);
     return handle != NULL;
@@ -159,21 +179,23 @@ inline bool mlovinit() {
 
 inline void LogShaders() {
     handle = dlopen("libGLESv2.so", RTLD_LAZY);
-    auto p = (const void*(*)(...))dlsym(handle, "glGetUniformLocation");
-    if (!dlerror()) {
-        A64HookFunction(reinterpret_cast<void*>(p),
-                        reinterpret_cast<void*>(new_glGetUniformLocation),
-                        reinterpret_cast<void**>(&old_glGetUniformLocation));
+    if (!handle) return;
+    void *p = dlsym(handle, "glGetUniformLocation");
+    if (p) {
+        HOOK_FN(p,
+                (void*)new_glGetUniformLocation,
+                (void**)&old_glGetUniformLocation);
     }
 }
 
 inline void Wallhack() {
     handle = dlopen("libGLESv2.so", RTLD_LAZY);
-    auto p = (const void*(*)(...))dlsym(handle, "glDrawElements");
-    if (!dlerror()) {
-        A64HookFunction(reinterpret_cast<void*>(p),
-                        reinterpret_cast<void*>(new_glDrawElements),
-                        reinterpret_cast<void**>(&old_glDrawElements));
+    if (!handle) return;
+    void *p = dlsym(handle, "glDrawElements");
+    if (p) {
+        HOOK_FN(p,
+                (void*)new_glDrawElements,
+                (void**)&old_glDrawElements);
     }
 }
 
