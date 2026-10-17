@@ -3259,7 +3259,7 @@ private void syncToggles(int[] featNums, boolean on) {
         }
     }
        // ================================================================
-    // Dropdown Fix: Custom PopupWindow Spinner (Prevents Game Resume)
+    // Dropdown Fix: Custom PopupWindow Spinner (Crash Fixed)
     // ================================================================
     private void Spinner(LinearLayout linLayout, final int featNum, final String featName, final String list) {
         final Context ctx = getContext;
@@ -3289,15 +3289,12 @@ private void syncToggles(int[] featNums, boolean on) {
         btn.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                // Build Popup List
                 LinearLayout popupLayout = new LinearLayout(ctx);
                 popupLayout.setOrientation(LinearLayout.VERTICAL);
                 popupLayout.setBackground(cardBg(COLOR_BG_TOP, withAlpha(COLOR_ACCENT, 0xAA), 8));
                 popupLayout.setPadding(dp(4), dp(4), dp(4), dp(4));
 
                 ScrollView scrollView = new ScrollView(ctx);
-                scrollView.setLayoutParams(new LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT));
-                
                 LinearLayout listLayout = new LinearLayout(ctx);
                 listLayout.setOrientation(LinearLayout.VERTICAL);
 
@@ -3305,7 +3302,7 @@ private void syncToggles(int[] featNums, boolean on) {
                         btn.getWidth(), WRAP_CONTENT, true);
                 popupWindow.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
                 popupWindow.setOutsideTouchable(true);
-                popupWindow.setFocusable(false); // ★ Prevents game pause
+                popupWindow.setFocusable(false); // Prevents game pause
 
                 for (int i = 0; i < lists.size(); i++) {
                     final int index = i;
@@ -3333,11 +3330,13 @@ private void syncToggles(int[] featNums, boolean on) {
                     listLayout.addView(tv);
                 }
 
+                // ★ FIX: Add scrollView only ONCE
                 scrollView.addView(listLayout);
+                
                 if (lists.size() > 5) {
                     popupLayout.addView(scrollView, new LinearLayout.LayoutParams(MATCH_PARENT, dp(200)));
                 } else {
-                    popupLayout.addView(listLayout);
+                    popupLayout.addView(scrollView, new LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT));
                 }
 
                 popupWindow.showAsDropDown(btn, 0, 0);
