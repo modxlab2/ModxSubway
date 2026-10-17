@@ -1,8 +1,3 @@
-// ================================================================
-// ModX Lab — Subway Surfers
-// Auto-Update Hook System + Chams (Dropdown Menu Update)
-// ================================================================
-
 #include "Includes.h"
 #include "Includes/Logger.h"
 #include "Includes/obfuscate.h"
@@ -90,7 +85,6 @@ static std::atomic<bool> g_FastLaneChange   {false};
 static std::atomic<int>  g_ScoreMultiplier  {0};
 static std::atomic<bool> g_NoCollision      {false};
 static std::atomic<bool> g_UnlimitedCoins   {false};
-
 static std::atomic<long long> g_NoCollisionStartMs {0};
 
 // ================================================================
@@ -177,6 +171,7 @@ static int new_GetCurrency(void* self, int currencyType) {
 //                       HACK THREAD
 // ================================================================
 void* hack_thread(void*) {
+    openLogFile();
     LOGI("Starting hooks...");
     while (!isLibraryLoaded(LIB)) sleep(1);
     sleep(3);
@@ -243,7 +238,7 @@ void* hack_thread(void*) {
 }
 
 // ================================================================
-//                      JNI — FEATURE LIST (Spinner Update)
+//                      JNI — FEATURE LIST
 // ================================================================
 jobjectArray GetFeatureList(JNIEnv* env, jobject) {
     jobjectArray ret;
@@ -275,34 +270,29 @@ jobjectArray GetFeatureList(JNIEnv* env, jobject) {
         OBFUSCATE("110_Toggle_Unlimited Coins"),
 
         // ============================================================
-        //  ★ CHAMS TAB (Spinners)
+        //  ★ CHAMS TAB
         // ============================================================
         OBFUSCATE("Category_Chams"),
         
         OBFUSCATE("119_Toggle_Enable Chams"),
 
-        // Modes (0-4)
-        OBFUSCATE("120_Spinner_Chams Mode_OFF,Fill Only,Wireframe,Fill + Outline,X-Ray"),
+        // Modes (0-4) - Spinner format: 120_Spinner_Name_Opt1,Opt2,Opt3
+        OBFUSCATE("120_Spinner_Chams Mode_Off,Solid,X-Ray,Outline + X-Ray,Wireframe"),
         
-        // Color Presets (0-5)
-        OBFUSCATE("125_Spinner_Color Preset_Neon Green/Red,Cyan/Magenta,Yellow/Blue,Orange/Purple,White/Red,Stealth"),
+        // Color Presets (0-4)
+        OBFUSCATE("125_Spinner_Color Preset_Neon Green/Red,Cyan/Magenta,Yellow/Blue,White/Red,Stealth"),
         
-        // Shader Presets (0-4)
-        OBFUSCATE("126_Spinner_Shader Target__Displacement (Trains),_MainTex (All),_Color,unity_SHC,_BaseMap"),
-
-        OBFUSCATE("SmallTextView_<font color='#FFBB33'>Tip:</font> <b>_MainTex</b> shows whole trains and containers!"),
+        // Shader Targets (0-3) - MainTex is now default
+        OBFUSCATE("126_Spinner_Shader Target_MainTex (All Objects),Displacement (Trains),Color,unity_SHC"),
 
         OBFUSCATE("121_Toggle_Rainbow Visible"),
         OBFUSCATE("122_Toggle_Rainbow In-Wall"),
-        
         OBFUSCATE("124_Toggle_Dump Shaders to File"),
     };
 
     int n = (int)(sizeof(features) / sizeof(features[0]));
     ret = (jobjectArray) env->NewObjectArray(
-            n,
-            env->FindClass(OBFUSCATE("java/lang/String")),
-            env->NewStringUTF(""));
+            n, env->FindClass(OBFUSCATE("java/lang/String")), env->NewStringUTF(""));
 
     for (int i = 0; i < n; i++)
         env->SetObjectArrayElement(ret, i, env->NewStringUTF(features[i]));
@@ -316,8 +306,6 @@ jobjectArray GetFeatureList(JNIEnv* env, jobject) {
 void Changes(JNIEnv*, jclass, jobject,
              jint featNum, jstring, jint value,
              jlong, jboolean boolean, jstring) {
-
-    LOGI("Changes() featNum=%d value=%d bool=%d", featNum, value, (int)boolean);
 
     switch (featNum) {
 
@@ -339,25 +327,13 @@ void Changes(JNIEnv*, jclass, jobject,
         case 110: g_UnlimitedCoins.store(boolean);    break;
 
         // ---------- ★ Chams ----------
-        case 119: {
-            g_ChamsEnabled = boolean;
-            LOGI("Chams Enabled = %d", (int)boolean);
-        } break;
-        case 120: {
-            chamsint = value;
-            LOGI("Chams Mode = %d", value);
-        } break;
-        case 125: {
-            setColorPreset(value);
-            LOGI("Color Preset = %d", value);
-        } break;
-        case 126: {
-            setShaderPreset(value);
-            LOGI("Shader Preset = %d", value);
-        } break;
-        case 121: enableRainbow = boolean;       break;
-        case 122: enableRainbowWall = boolean;   break;
-        case 124: if (boolean) dumpShadersToFile(); break;
+        case 119: g_ChamsEnabled = boolean;           break;
+        case 120: chamsint = value;                   break;
+        case 125: setColorPreset(value);              break;
+        case 126: setShaderPreset(value);             break;
+        case 121: enableRainbow = boolean;            break;
+        case 122: enableRainbowWall = boolean;        break;
+        case 124: if (boolean) dumpShadersToFile();   break;
 
         // ---------- Presets ----------
         case 800: {
@@ -434,7 +410,6 @@ extern "C" JNIEXPORT void JNICALL Java_com_android_support_Main_setNativeCrashDi
 // ================================================================
 __attribute__((constructor))
 void lib_main() {
-    openLogFile();
     pthread_t ptid;
     pthread_create(&ptid, NULL, hack_thread, NULL);
 }

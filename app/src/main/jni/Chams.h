@@ -41,10 +41,9 @@ struct Vec4 {
 static void *handle = nullptr;
 std::vector<std::string> shaders;
 
-// ★ Default to Mode 3 (Fill + Outline) & _Displacement
-int chamsint = 3;
+int chamsint = 3; // Default: Outline + X-Ray
 bool g_ChamsEnabled = false;
-std::string mineShader = "_Displacement";
+std::string mineShader = "_MainTex"; // ★ Default changed to _MainTex to color ALL objects
 
 // ================================================================
 //  Color Presets
@@ -58,7 +57,6 @@ static const ColorPreset kColorPresets[] = {
     { "Neon Green/Red",   {0.00f, 1.00f, 0.30f, 1.0f}, {1.00f, 0.10f, 0.10f, 1.0f} },
     { "Cyan/Magenta",     {0.00f, 1.00f, 1.00f, 1.0f}, {1.00f, 0.00f, 0.60f, 1.0f} },
     { "Yellow/Blue",      {1.00f, 0.90f, 0.10f, 1.0f}, {0.15f, 0.40f, 1.00f, 1.0f} },
-    { "Orange/Purple",    {1.00f, 0.55f, 0.00f, 1.0f}, {0.70f, 0.20f, 1.00f, 1.0f} },
     { "White/Red",        {1.00f, 1.00f, 1.00f, 1.0f}, {1.00f, 0.00f, 0.00f, 1.0f} },
     { "Stealth (Gray)",   {0.15f, 0.15f, 0.15f, 1.0f}, {1.00f, 0.00f, 0.00f, 1.0f} },
 };
@@ -78,11 +76,10 @@ struct ShaderPreset {
     const char* shader;
 };
 static const ShaderPreset kShaderPresets[] = {
-    { "_Displacement", "_Displacement" }, // 0 (trains only)
-    { "_MainTex",      "_MainTex"      }, // 1 (trains + containers + environment)
-    { "_Color",        "_Color"        }, // 2
-    { "unity_SHC",     "unity_SHC"     }, // 3
-    { "_BaseMap",      "_BaseMap"      }, // 4
+    { "MainTex (All Objects)", "_MainTex"      }, // 0
+    { "Displacement (Trains)", "_Displacement" }, // 1
+    { "Color",                 "_Color"        }, // 2
+    { "unity_SHC",             "unity_SHC"     }, // 3
 };
 static const int kShaderPresetCount = sizeof(kShaderPresets) / sizeof(kShaderPresets[0]);
 
@@ -92,13 +89,11 @@ void setColorPreset(int idx) {
     inWallColor  = kColorPresets[idx].inWall;
     enableRainbow = false;
     enableRainbowWall = false;
-    CHAMS_LOGI("Color preset -> %s", kColorPresets[idx].name);
 }
 
 void setShaderPreset(int idx) {
     if (idx < 0 || idx >= kShaderPresetCount) return;
     mineShader = kShaderPresets[idx].shader;
-    CHAMS_LOGI("Shader preset -> %s", kShaderPresets[idx].name);
 }
 
 // ================================================================
@@ -119,10 +114,6 @@ const char *isDumpLocation = "/sdcard/Documents/Shaders.txt";
 void dumpShadersToFile() {
     std::ofstream f(isDumpLocation, std::ios::out | std::ios::trunc);
     if (!f.is_open()) return;
-    time_t now = time(nullptr);
-    char tb[64];
-    strftime(tb, sizeof(tb), "%Y-%m-%d %H:%M:%S", localtime(&now));
-    f << "=== Shader List @ " << tb << " ===\nTotal: " << shaders.size() << "\n\n";
     for (const auto& s : shaders) f << s << "\n";
     f.close();
 }
@@ -142,12 +133,13 @@ int new_glGetUniformLocation(unsigned int program, const char *name) {
 }
 
 // ================================================================
-//  glDrawElements hook — Optimized Modes 3 & 4
+//  glDrawElements hook — Pro Level Rendering
 // ================================================================
 void (*old_glDrawElements)(unsigned int, int, unsigned int, const void *) = nullptr;
 void new_glDrawElements(unsigned int mode, int count, unsigned int type, const void *indices) {
 
-    if (mode != GL_TRIANGLES || count < 2000) return old_glDrawElements(mode, count, type, indices);
+    // Filter out tiny UI meshes
+    if (mode != GL_TRIANGLES || count < 100) return old_glDrawElements(mode, count, type, indices);
 
     unsigned char blend = 0;
     p_glGetBooleanv(GL_BLEND, &blend);
@@ -174,50 +166,66 @@ void new_glDrawElements(unsigned int mode, int count, unsigned int type, const v
     }
     performRGBChange();
 
-    // Render original mesh first
-    old_glDrawElements(mode, count, type, indices);
-
-    // Apply Chams Overlay
-    p_glDisable(GL_CULL_FACE); // ★ Important: See all sides
-    p_glEnable(GL_BLEND);
-    p_glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-
-    // Mode 3: Fill + Outline (Default)
-    if (chamsint == 3) {
-        // Fill
-        p_glBlendColor(visibleColor.x, visibleColor.y, visibleColor.z, 0.5f);
-        p_glDepthRangef(1.0f, 0.5f);
-        old_glDrawElements(mode, count, type, indices);
-
-        // Outline
-        p_glLineWidth(4.0f);
-        p_glBlendColor(inWallColor.x, inWallColor.y, inWallColor.z, 1.0f);
-        p_glDepthRangef(0.5f, 0.0f);
-        old_glDrawElements(GL_LINES, count, type, indices);
-    }
-    // Mode 4: X-Ray (Through walls)
-    else if (chamsint == 4) {
-        p_glDisable(GL_DEPTH_TEST); // See through everything
+    // Mode 1: Solid ESP (Visible only)
+    if (chamsint == 1) {
+        old_glDrawElements(mode, count, type, indices); // Draw original
+        p_glEnable(GL_BLEND);
+        p_glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
         p_glBlendColor(visibleColor.x, visibleColor.y, visibleColor.z, 0.8f);
+        p_glDepthRangef(1.0f, 0.5f);
+        old_glDrawElements(mode, count, type, indices); // Draw overlay
+    }
+    // Mode 2: X-Ray ESP (Through walls)
+    else if (chamsint == 2) {
+        old_glDrawElements(mode, count, type, indices); // Draw original
+        p_glEnable(GL_BLEND);
+        p_glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+        p_glDisable(GL_DEPTH_TEST); // See through
+        p_glDisable(GL_CULL_FACE); // See all sides
+        p_glBlendColor(visibleColor.x, visibleColor.y, visibleColor.z, 0.5f);
         old_glDrawElements(mode, count, type, indices);
         p_glEnable(GL_DEPTH_TEST);
+        p_glEnable(GL_CULL_FACE);
     }
-    // Mode 1: Fill Only
-    else if (chamsint == 1) {
-        p_glBlendColor(visibleColor.x, visibleColor.y, visibleColor.z, 0.5f);
-        p_glDepthRangef(1.0f, 0.5f);
+    // Mode 3: Outline + X-Ray Fill (Professional)
+    else if (chamsint == 3) {
+        // 1. Draw X-Ray (Inside/Back walls)
+        p_glDisable(GL_DEPTH_TEST);
+        p_glDisable(GL_CULL_FACE);
+        p_glEnable(GL_BLEND);
+        p_glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+        p_glBlendColor(inWallColor.x, inWallColor.y, inWallColor.z, 0.6f);
         old_glDrawElements(mode, count, type, indices);
+
+        // 2. Draw Visible Front Walls
+        p_glEnable(GL_DEPTH_TEST);
+        p_glDepthRangef(1.0f, 0.5f);
+        p_glBlendColor(visibleColor.x, visibleColor.y, visibleColor.z, 1.0f);
+        old_glDrawElements(mode, count, type, indices);
+        
+        // 3. Draw Wireframe Outline (Crisp edges)
+        p_glLineWidth(3.0f);
+        p_glDisable(GL_DEPTH_TEST);
+        p_glBlendColor(0, 0, 0, 1); // Black outline
+        old_glDrawElements(GL_LINES, count, type, indices);
+        
+        p_glEnable(GL_DEPTH_TEST);
+        p_glEnable(GL_CULL_FACE);
     }
-    // Mode 2: Wireframe Only
-    else if (chamsint == 2) {
+    // Mode 4: Wireframe Only
+    else if (chamsint == 4) {
+        old_glDrawElements(mode, count, type, indices); // Draw original
+        p_glDisable(GL_CULL_FACE);
+        p_glEnable(GL_BLEND);
+        p_glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
         p_glLineWidth(3.0f);
         p_glBlendColor(visibleColor.x, visibleColor.y, visibleColor.z, 1.0f);
         p_glDepthRangef(1.0f, 0.0f);
         old_glDrawElements(GL_LINES, count, type, indices);
+        p_glEnable(GL_CULL_FACE);
     }
 
     // Cleanup
-    p_glEnable(GL_CULL_FACE);
     p_glDisable(GL_BLEND);
     p_glLineWidth(1.0f);
     p_glDepthRangef(0.0f, 1.0f);
@@ -246,8 +254,6 @@ void RenderHook() {
     
     void *pDraw = dlsym(handle, "glDrawElements");
     if (pDraw) HOOK_FN(pDraw, (void*)new_glDrawElements, (void**)&old_glDrawElements);
-    
-    CHAMS_LOGI("Chams hooks installed");
 }
 
 #endif
