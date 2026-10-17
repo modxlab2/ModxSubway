@@ -3257,8 +3257,8 @@ private void syncToggles(int[] featNums, boolean on) {
                 break;
         }
     }
-        // ================================================================
-    // Dropdown Fix: Custom Dialog Spinner (Prevents Game Resume Bug)
+       // ================================================================
+    // Dropdown Fix: Custom PopupWindow Spinner (Prevents Game Resume)
     // ================================================================
     private void Spinner(LinearLayout linLayout, final int featNum, final String featName, final String list) {
         final Context ctx = getContext;
@@ -3279,10 +3279,8 @@ private void syncToggles(int[] featNums, boolean on) {
         final int savedIdx = Preferences.loadPrefInt(featName, featNum);
         final int initIdx = (savedIdx >= 0 && savedIdx < lists.size()) ? savedIdx : 0;
         
-        // Set initial text
         btn.setText(featName + ": " + lists.get(initIdx));
 
-        // Add a chevron icon to the button
         TabIcon chevIcon = new TabIcon(TabIcon.CHEVRON);
         chevIcon.setColor(COLOR_ACCENT);
         btn.setCompoundDrawablesWithIntrinsicBounds(null, null, chevIcon, null);
@@ -3290,45 +3288,63 @@ private void syncToggles(int[] featNums, boolean on) {
         btn.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                AlertDialog.Builder builder = new AlertDialog.Builder(ctx);
-                builder.setTitle(featName);
-                
-                ArrayAdapter<String> adapter = new ArrayAdapter<String>(ctx, android.R.layout.select_dialog_item, lists) {
-                    @Override
-                    public View getView(int position, View convertView, ViewGroup parent) {
-                        View v = super.getView(position, convertView, parent);
-                        if (v instanceof TextView) {
-                            TextView tv = (TextView) v;
-                            tv.setTextColor(TEXT_COLOR_2);
-                            tv.setTypeface(fontMedium);
-                        }
-                        return v;
-                    }
-                };
+                // Build Popup List
+                LinearLayout popupLayout = new LinearLayout(ctx);
+                popupLayout.setOrientation(LinearLayout.VERTICAL);
+                popupLayout.setBackground(cardBg(COLOR_BG_TOP, withAlpha(COLOR_ACCENT, 0xAA), 8));
+                popupLayout.setPadding(dp(4), dp(4), dp(4), dp(4));
 
-                builder.setAdapter(adapter, new android.content.DialogInterface.OnClickListener() {
-                    @Override
-                    public void onClick(android.content.DialogInterface dialog, int which) {
-                        btn.setText(featName + ": " + lists.get(which));
-                        Preferences.changeFeatureInt(featName, featNum, which);
-                    }
-                });
+                ScrollView scrollView = new ScrollView(ctx);
+                scrollView.setLayoutParams(new LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT));
                 
-                AlertDialog dialog = builder.create();
-                Window w = dialog.getWindow();
-                if (w != null) {
-                    w.setBackgroundDrawable(cardBg(COLOR_BG_TOP, withAlpha(COLOR_ACCENT, 0xAA), 10));
-                    if (overlayRequired) {
-                        w.setType(Build.VERSION.SDK_INT >= 26 ? 2038 : 2002);
+                LinearLayout listLayout = new LinearLayout(ctx);
+                listLayout.setOrientation(LinearLayout.VERTICAL);
+
+                final PopupWindow popupWindow = new PopupWindow(popupLayout, 
+                        btn.getWidth(), WRAP_CONTENT, true);
+                popupWindow.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
+                popupWindow.setOutsideTouchable(true);
+                popupWindow.setFocusable(false); // ★ Prevents game pause
+
+                for (int i = 0; i < lists.size(); i++) {
+                    final int index = i;
+                    TextView tv = new TextView(ctx);
+                    tv.setText(lists.get(i));
+                    tv.setTextColor(TEXT_COLOR_2);
+                    tv.setTypeface(fontMedium);
+                    tv.setTextSize(12f * currentScale);
+                    tv.setPadding(dp(12), dp(12), dp(12), dp(12));
+                    
+                    // Highlight selected
+                    if (index == initIdx) {
+                        tv.setTextColor(COLOR_ACCENT);
+                        tv.setBackground(cardBg(withAlpha(COLOR_ACCENT, 0x1A), 0, 4));
                     }
+
+                    tv.setOnClickListener(new View.OnClickListener() {
+                        @Override
+                        public void onClick(View v) {
+                            btn.setText(featName + ": " + lists.get(index));
+                            Preferences.changeFeatureInt(featName, featNum, index);
+                            popupWindow.dismiss();
+                        }
+                    });
+                    listLayout.addView(tv);
                 }
-                dialog.show();
+
+                scrollView.addView(listLayout);
+                if (lists.size() > 5) {
+                    popupLayout.addView(scrollView, new LinearLayout.LayoutParams(MATCH_PARENT, dp(200)));
+                } else {
+                    popupLayout.addView(listLayout);
+                }
+
+                popupWindow.showAsDropDown(btn, 0, 0);
             }
         });
 
         linLayout.addView(btn);
     }
-
     private void InputNum(LinearLayout linLayout, final int featNum, final String featName, final int maxValue) {
         final Button button = new Button(getContext);
         button.setMinHeight(0);
