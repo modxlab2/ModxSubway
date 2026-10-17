@@ -274,12 +274,18 @@ jobjectArray GetFeatureList(JNIEnv* env, jobject) {
         OBFUSCATE("Category_Chams"),
         
         OBFUSCATE("119_Toggle_Enable Chams"),
-        OBFUSCATE("120_Spinner_Chams Mode_Off,Solid Fill,X-Ray,Professional Outline,Glow"),
+        
+        // Modes (0-3)
+        OBFUSCATE("120_Spinner_Chams Mode_Off,Solid Visible,X-Ray,Hybrid Professional"),
+        
+        // Color Presets (0-3)
         OBFUSCATE("125_Spinner_Color Preset_Neon Green/Red,Cyan/Magenta,Yellow/Blue,White/Red"),
-        OBFUSCATE("126_Spinner_Shader Target_Trains Only (_Displacement),All Objects (_MainTex),Color (_Color)"),
+        
+        // Shader Targets (0-2)
+        OBFUSCATE("126_Spinner_Shader Target_Trains Only (_Displacement),All Objects (_MainTex)"),
+
         OBFUSCATE("121_Toggle_Rainbow Visible"),
         OBFUSCATE("122_Toggle_Rainbow In-Wall"),
-        OBFUSCATE("124_Toggle_Dump Shaders"),
     };
 
     int n = (int)(sizeof(features) / sizeof(features[0]));
@@ -325,7 +331,6 @@ void Changes(JNIEnv*, jclass, jobject,
         case 126: setShaderPreset(value);             break;
         case 121: enableRainbow = boolean;            break;
         case 122: enableRainbowWall = boolean;        break;
-        case 124: if (boolean) dumpShadersToFile();   break;
 
         // ---------- Presets ----------
         case 800: {

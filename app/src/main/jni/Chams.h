@@ -41,9 +41,9 @@ struct Vec4 {
 static void *handle = nullptr;
 std::vector<std::string> shaders;
 
-int chamsint = 3; // Default: Outline Mode
+int chamsint = 3; // Default: 3 (Hybrid Professional)
 bool g_ChamsEnabled = false;
-std::string mineShader = "_Displacement"; // ★ Best for trains
+std::string mineShader = "_Displacement"; // Best for Trains
 
 // ================================================================
 //  Color Presets
@@ -122,8 +122,12 @@ int new_glGetUniformLocation(unsigned int program, const char *name) {
 void (*old_glDrawElements)(unsigned int, int, unsigned int, const void *) = nullptr;
 void new_glDrawElements(unsigned int mode, int count, unsigned int type, const void *indices) {
 
-    // ★ Filter: Ignore small meshes (UI, coins, small debris). Only target big trains.
-    if (mode != GL_TRIANGLES || count < 3000) {
+    // ★ Dynamic Count Filter (Fixes close-up train disappearing bug)
+    // If _Displacement, we want ALL train parts (count > 100).
+    // If _MainTex, we only want big objects to avoid coloring the environment (count > 3000).
+    int minCount = (mineShader == "_Displacement") ? 100 : 3000;
+    
+    if (mode != GL_TRIANGLES || count < minCount) {
         return old_glDrawElements(mode, count, type, indices);
     }
 
@@ -151,68 +155,52 @@ void new_glDrawElements(unsigned int mode, int count, unsigned int type, const v
     }
     performRGBChange();
 
-    // Always draw original first
+    // Always draw original first (so game looks normal)
     old_glDrawElements(mode, count, type, indices);
 
     p_glEnable(GL_BLEND);
     p_glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
-    // Mode 1: Solid Fill
+    // Mode 1: Solid Visible (Only shows front)
     if (chamsint == 1) {
-        p_glBlendColor(visibleColor.x, visibleColor.y, visibleColor.z, 0.6f);
-        p_glDepthRangef(1.0f, 0.5f);
+        p_glBlendColor(visibleColor.x, visibleColor.y, visibleColor.z, 0.8f);
+        p_glDisable(GL_CULL_FACE);
         old_glDrawElements(mode, count, type, indices);
+        p_glEnable(GL_CULL_FACE);
     }
-    // Mode 2: X-Ray (Through walls)
+    // Mode 2: X-Ray (See through everything)
     else if (chamsint == 2) {
         p_glDisable(GL_DEPTH_TEST);
-        p_glDisable(GL_CULL_FACE); // See all sides
-        p_glBlendColor(inWallColor.x, inWallColor.y, inWallColor.z, 0.5f);
-        old_glDrawElements(mode, count, type, indices);
-        p_glEnable(GL_DEPTH_TEST);
-        p_glEnable(GL_CULL_FACE);
-    }
-    // Mode 3: Professional Outline (Best View)
-    else if (chamsint == 3) {
-        // 1. Draw inner walls (X-Ray style)
-        p_glDisable(GL_DEPTH_TEST);
         p_glDisable(GL_CULL_FACE);
-        p_glBlendColor(inWallColor.x, inWallColor.y, inWallColor.z, 0.5f);
+        p_glBlendColor(visibleColor.x, visibleColor.y, visibleColor.z, 0.5f);
         old_glDrawElements(mode, count, type, indices);
-        
-        // 2. Draw front solid fill
-        p_glEnable(GL_DEPTH_TEST);
-        p_glDepthRangef(1.0f, 0.5f);
-        p_glBlendColor(visibleColor.x, visibleColor.y, visibleColor.z, 0.8f);
-        old_glDrawElements(mode, count, type, indices);
-        
-        // 3. Draw crisp black outline
-        p_glLineWidth(3.0f);
-        p_glDisable(GL_DEPTH_TEST);
-        p_glBlendColor(0, 0, 0, 1);
-        old_glDrawElements(GL_LINES, count, type, indices);
-        
         p_glEnable(GL_DEPTH_TEST);
         p_glEnable(GL_CULL_FACE);
     }
-    // Mode 4: Glow
-    else if (chamsint == 4) {
-        p_glLineWidth(8.0f);
+    // Mode 3: Hybrid Professional (Best View)
+    else if (chamsint == 3) {
+        // 1. Draw inner walls / through walls (In-Wall Color)
+        p_glDisable(GL_DEPTH_TEST);
+        p_glDisable(GL_CULL_FACE); // See all sides
+        p_glBlendColor(inWallColor.x, inWallColor.y, inWallColor.z, 0.4f);
+        old_glDrawElements(mode, count, type, indices);
+
+        // 2. Draw outer visible walls (Solid Color)
+        p_glEnable(GL_DEPTH_TEST);
         p_glBlendColor(visibleColor.x, visibleColor.y, visibleColor.z, 1.0f);
-        p_glDepthRangef(1.0f, 0.5f);
-        old_glDrawElements(GL_LINES, count, type, indices);
-        p_glLineWidth(3.0f);
-        p_glBlendColor(1, 1, 1, 1);
-        old_glDrawElements(GL_LINES, count, type, indices);
+        old_glDrawElements(mode, count, type, indices);
+        
+        p_glEnable(GL_CULL_FACE);
     }
 
-    // Cleanup
+    // Restore GL state
     p_glDisable(GL_BLEND);
-    p_glLineWidth(1.0f);
-    p_glDepthRangef(0.0f, 1.0f);
     p_glBlendColor(0, 0, 0, 1);
 }
 
+// ================================================================
+//  Setup hooks
+// ================================================================
 void RenderHook() {
     if (!handle) handle = dlopen("libGLESv2.so", RTLD_LAZY);
     if (!handle) return;
