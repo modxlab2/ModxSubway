@@ -3257,76 +3257,76 @@ private void syncToggles(int[] featNums, boolean on) {
                 break;
         }
     }
+        // ================================================================
+    // Dropdown Fix: Custom Dialog Spinner (Prevents Game Resume Bug)
+    // ================================================================
     private void Spinner(LinearLayout linLayout, final int featNum, final String featName, final String list) {
         final Context ctx = getContext;
         final List<String> lists = new LinkedList<String>(Arrays.asList(list.split(",")));
 
-        FrameLayout holder = new FrameLayout(ctx);
-        holder.setLayoutParams(rowLp(6, 3, 6, 3));
-        holder.setBackground(cardBg(COLOR_CARD, COLOR_CARD_BORDER, 6));
+        final Button btn = new Button(ctx);
+        btn.setLayoutParams(rowLp(6, 3, 6, 3));
+        btn.setAllCaps(false);
+        btn.setGravity(Gravity.LEFT | Gravity.CENTER_VERTICAL);
+        btn.setPadding(dp(12), dp(11), dp(12), dp(11));
+        btn.setBackground(cardBg(COLOR_CARD, COLOR_CARD_BORDER, 6));
+        btn.setTextColor(TEXT_COLOR_2);
+        btn.setTypeface(fontMedium);
+        btn.setTextSize(12f * currentScale);
+        flatten(btn);
+        addPressAnim(btn);
 
-        final Spinner spinner = new Spinner(ctx, Spinner.MODE_DROPDOWN);
-        spinner.setLayoutParams(new FrameLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT));
-        spinner.setBackground(null);
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN) {
-            spinner.setPopupBackgroundDrawable(cardBg(COLOR_CARD_HI, withAlpha(COLOR_ACCENT, 0x88), 10));
-        }
+        final int savedIdx = Preferences.loadPrefInt(featName, featNum);
+        final int initIdx = (savedIdx >= 0 && savedIdx < lists.size()) ? savedIdx : 0;
+        
+        // Set initial text
+        btn.setText(featName + ": " + lists.get(initIdx));
 
-        ArrayAdapter<String> aa = new ArrayAdapter<String>(ctx, android.R.layout.simple_spinner_dropdown_item, lists) {
-            @Override
-            public View getView(int position, View convertView, ViewGroup parent) {
-                View v = super.getView(position, convertView, parent);
-                if (v instanceof TextView) {
-                    TextView tv = (TextView) v;
-                    tv.setTextColor(TEXT_COLOR_2);
-                    tv.setTypeface(fontMedium);
-                    tv.setTextSize(12f * currentScale);
-                    tv.setMinHeight(0);
-                    tv.setMinimumHeight(0);
-                    tv.setPadding(dp(12), dp(10), dp(30), dp(10));
-                }
-                return v;
-            }
-
-            @Override
-            public View getDropDownView(int position, View convertView, ViewGroup parent) {
-                View v = super.getDropDownView(position, convertView, parent);
-                if (v instanceof TextView) {
-                    TextView tv = (TextView) v;
-                    tv.setTextColor(TEXT_COLOR_2);
-                    tv.setTypeface(fontMedium);
-                    tv.setTextSize(12f * currentScale);
-                    tv.setMinHeight(0);
-                    tv.setMinimumHeight(0);
-                    tv.setBackgroundColor(COLOR_CARD_HI);
-                    tv.setPadding(dp(14), dp(11), dp(14), dp(11));
-                }
-                return v;
-            }
-        };
-        spinnerAdapters.add(aa);
-        spinner.setAdapter(aa);
-        spinner.setSelection(Preferences.loadPrefInt(featName, featNum));
-        spinner.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
-    @Override
-    public void onItemSelected(AdapterView<?> p, View sv, int pos, long id) {
-        Preferences.changeFeatureInt(featName, featNum, pos); // <--- এখানে featName হবে
-    }
-                @Override public void onNothingSelected(AdapterView<?> p) { }
-            });
-
-        // chevron sits above the spinner but lets touches fall through
-        ImageView chevron = new ImageView(ctx);
+        // Add a chevron icon to the button
         TabIcon chevIcon = new TabIcon(TabIcon.CHEVRON);
         chevIcon.setColor(COLOR_ACCENT);
-        chevron.setImageDrawable(chevIcon);
-        FrameLayout.LayoutParams chLp = new FrameLayout.LayoutParams(dp(18), dp(18), Gravity.RIGHT | Gravity.CENTER_VERTICAL);
-        chLp.setMargins(0, 0, dp(10), 0);
-        chevron.setLayoutParams(chLp);
+        btn.setCompoundDrawablesWithIntrinsicBounds(null, null, chevIcon, null);
 
-        holder.addView(spinner);
-        holder.addView(chevron);
-        linLayout.addView(holder);
+        btn.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                AlertDialog.Builder builder = new AlertDialog.Builder(ctx);
+                builder.setTitle(featName);
+                
+                ArrayAdapter<String> adapter = new ArrayAdapter<String>(ctx, android.R.layout.select_dialog_item, lists) {
+                    @Override
+                    public View getView(int position, View convertView, ViewGroup parent) {
+                        View v = super.getView(position, convertView, parent);
+                        if (v instanceof TextView) {
+                            TextView tv = (TextView) v;
+                            tv.setTextColor(TEXT_COLOR_2);
+                            tv.setTypeface(fontMedium);
+                        }
+                        return v;
+                    }
+                };
+
+                builder.setAdapter(adapter, new android.content.DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(android.content.DialogInterface dialog, int which) {
+                        btn.setText(featName + ": " + lists.get(which));
+                        Preferences.changeFeatureInt(featName, featNum, which);
+                    }
+                });
+                
+                AlertDialog dialog = builder.create();
+                Window w = dialog.getWindow();
+                if (w != null) {
+                    w.setBackgroundDrawable(cardBg(COLOR_BG_TOP, withAlpha(COLOR_ACCENT, 0xAA), 10));
+                    if (overlayRequired) {
+                        w.setType(Build.VERSION.SDK_INT >= 26 ? 2038 : 2002);
+                    }
+                }
+                dialog.show();
+            }
+        });
+
+        linLayout.addView(btn);
     }
 
     private void InputNum(LinearLayout linLayout, final int featNum, final String featName, final int maxValue) {
