@@ -3308,10 +3308,10 @@ private void syncToggles(int[] featNums, boolean on) {
         spinner.setAdapter(aa);
         spinner.setSelection(Preferences.loadPrefInt(featName, featNum));
         spinner.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
-                @Override
-                public void onItemSelected(AdapterView<?> p, View sv, int pos, long id) {
-                    Preferences.changeFeatureInt(spinner.getSelectedItem().toString(), featNum, pos);
-                }
+    @Override
+    public void onItemSelected(AdapterView<?> p, View sv, int pos, long id) {
+        Preferences.changeFeatureInt(featName, featNum, pos); // <--- এখানে featName হবে
+    }
                 @Override public void onNothingSelected(AdapterView<?> p) { }
             });
 
