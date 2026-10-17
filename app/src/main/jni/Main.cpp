@@ -35,8 +35,7 @@ static void openLogFile() {
     if (g_LogFile) return;
     const char* candidates[] = {
         "/sdcard/Documents/ModXLab_Log.txt",
-        "/storage/emulated/0/Documents/ModXLab_Log.txt",
-        "/sdcard/Android/data/com.kiloo.subwaysurf/files/ModXLab_Log.txt"
+        "/storage/emulated/0/Documents/ModXLab_Log.txt"
     };
     for (auto path : candidates) {
         FILE* f = fopen(path, "a");
@@ -275,19 +274,12 @@ jobjectArray GetFeatureList(JNIEnv* env, jobject) {
         OBFUSCATE("Category_Chams"),
         
         OBFUSCATE("119_Toggle_Enable Chams"),
-
-        // Modes (0-4) - Spinner format: 120_Spinner_Name_Opt1,Opt2,Opt3
-        OBFUSCATE("120_Spinner_Chams Mode_Off,Solid,X-Ray,Outline + X-Ray,Wireframe"),
-        
-        // Color Presets (0-4)
-        OBFUSCATE("125_Spinner_Color Preset_Neon Green/Red,Cyan/Magenta,Yellow/Blue,White/Red,Stealth"),
-        
-        // Shader Targets (0-3) - MainTex is now default
-        OBFUSCATE("126_Spinner_Shader Target_MainTex (All Objects),Displacement (Trains),Color,unity_SHC"),
-
+        OBFUSCATE("120_Spinner_Chams Mode_Off,Solid Fill,X-Ray,Professional Outline,Glow"),
+        OBFUSCATE("125_Spinner_Color Preset_Neon Green/Red,Cyan/Magenta,Yellow/Blue,White/Red"),
+        OBFUSCATE("126_Spinner_Shader Target_Trains Only (_Displacement),All Objects (_MainTex),Color (_Color)"),
         OBFUSCATE("121_Toggle_Rainbow Visible"),
         OBFUSCATE("122_Toggle_Rainbow In-Wall"),
-        OBFUSCATE("124_Toggle_Dump Shaders to File"),
+        OBFUSCATE("124_Toggle_Dump Shaders"),
     };
 
     int n = (int)(sizeof(features) / sizeof(features[0]));
