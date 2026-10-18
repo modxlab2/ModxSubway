@@ -48,18 +48,18 @@ std::string mineShader = "_Displacement";
 float g_MaxDistance = 60.0f; // Default distance
 
 // ================================================================
-//  Color Presets
+//  Color Presets (Perfect Professional Colors)
 // ================================================================
 struct ColorPreset { const char* name; Vec4 visible; Vec4 inWall; };
 static const ColorPreset kColorPresets[] = {
-    { "Dark Green / Sky Blue", {0.0f, 0.6f, 0.0f, 1.0f}, {0.3f, 0.8f, 1.0f, 1.0f} },
+    { "Dark Green / Sky Blue", {0.0f, 0.5f, 0.0f, 1.0f}, {0.3f, 0.8f, 1.0f, 1.0f} },
     { "Neon Green / Red",      {0.0f, 1.0f, 0.0f, 1.0f}, {1.0f, 0.0f, 0.0f, 1.0f} },
     { "Cyan / Magenta",        {0.0f, 1.0f, 1.0f, 1.0f}, {1.0f, 0.0f, 1.0f, 1.0f} },
 };
 static const int kColorPresetCount = sizeof(kColorPresets) / sizeof(kColorPresets[0]);
 
 bool enableRainbow = false, enableRainbowWall = false;
-Vec4 visibleColor = Vec4(0.0f, 0.6f, 0.0f, 1.0f);
+Vec4 visibleColor = Vec4(0.0f, 0.5f, 0.0f, 1.0f);
 Vec4 inWallColor  = Vec4(0.3f, 0.8f, 1.0f, 1.0f);
 
 // ================================================================
@@ -99,15 +99,6 @@ void (*p_glDepthFunc)(unsigned int)                     = nullptr;
 void (*p_glDepthMask)(unsigned char)                    = nullptr;
 void (*p_glGetUniformfv)(unsigned int, int, float*)     = nullptr;
 
-const char *isDumpLocation = "/sdcard/Documents/Shaders.txt";
-void dumpShadersToFile() {
-    std::ofstream f(isDumpLocation, std::ios::out | std::ios::trunc);
-    if (f.is_open()) {
-        for (const auto& s : shaders) f << s << "\n";
-        f.close();
-    }
-}
-
 int (*old_glGetUniformLocation)(unsigned int, const char *) = nullptr;
 int new_glGetUniformLocation(unsigned int program, const char *name) {
     if (name) {
@@ -120,14 +111,13 @@ int new_glGetUniformLocation(unsigned int program, const char *name) {
 }
 
 // ================================================================
-//  glDrawElements hook
+//  glDrawElements hook — Ultimate Fix
 // ================================================================
 void (*old_glDrawElements)(unsigned int, int, unsigned int, const void *) = nullptr;
 void new_glDrawElements(unsigned int mode, int count, unsigned int type, const void *indices) {
 
-    // Filter out character and small objects
+    // Filter out character (count < 1500)
     int minCount = (mineShader == "_Displacement") ? 1500 : 3000;
-    
     if (mode != GL_TRIANGLES || count < minCount) {
         return old_glDrawElements(mode, count, type, indices);
     }
@@ -179,7 +169,8 @@ void new_glDrawElements(unsigned int mode, int count, unsigned int type, const v
     old_glDrawElements(mode, count, type, indices);
 
     p_glEnable(GL_BLEND);
-    p_glBlendFunc(GL_ONE, GL_CONSTANT_COLOR); // ★ Color fix
+    // ★ GL_ZERO removes original texture color, GL_CONSTANT_COLOR applies our color.
+    p_glBlendFunc(GL_ZERO, GL_CONSTANT_COLOR); 
 
     // Mode 1: Solid Visible
     if (chamsint == 1) {
@@ -193,7 +184,7 @@ void new_glDrawElements(unsigned int mode, int count, unsigned int type, const v
         p_glDepthMask(GL_FALSE); 
         p_glDisable(GL_DEPTH_TEST);
         p_glDisable(GL_CULL_FACE);
-        p_glBlendColor(visibleColor.x, visibleColor.y, visibleColor.z, 0.5f);
+        p_glBlendColor(visibleColor.x, visibleColor.y, visibleColor.z, 1.0f);
         old_glDrawElements(mode, count, type, indices);
         p_glEnable(GL_DEPTH_TEST);
         p_glEnable(GL_CULL_FACE);
@@ -201,14 +192,15 @@ void new_glDrawElements(unsigned int mode, int count, unsigned int type, const v
     }
     // Mode 3: Hybrid Professional
     else if (chamsint == 3) {
-        // 1. Inner walls (Light Sky Blue)
-        p_glDisable(GL_DEPTH_TEST);
+        // 1. Inner walls (Light Sky Blue) - ONLY BEHIND CHARACTER
+        p_glEnable(GL_DEPTH_TEST);
+        p_glDepthFunc(GL_GREATER); // ★ Character is preserved!
         p_glDisable(GL_CULL_FACE); 
         p_glBlendColor(inWallColor.x, inWallColor.y, inWallColor.z, 1.0f);
         old_glDrawElements(mode, count, type, indices);
 
-        // 2. Outer walls (Dark Green)
-        p_glEnable(GL_DEPTH_TEST);
+        // 2. Outer walls (Dark Green) - Normal Depth
+        p_glDepthFunc(GL_LEQUAL); 
         p_glDepthMask(GL_FALSE); // Character fix
         p_glBlendColor(visibleColor.x, visibleColor.y, visibleColor.z, 1.0f);
         old_glDrawElements(mode, count, type, indices);
@@ -221,9 +213,6 @@ void new_glDrawElements(unsigned int mode, int count, unsigned int type, const v
     p_glBlendColor(0, 0, 0, 1);
 }
 
-// ================================================================
-//  Setup hooks
-// ================================================================
 void RenderHook() {
     if (!handle) handle = dlopen("libGLESv2.so", RTLD_LAZY);
     if (!handle) return;
