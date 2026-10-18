@@ -3258,43 +3258,49 @@ private void syncToggles(int[] featNums, boolean on) {
                 break;
         }
     }
-        // ================================================================
-    // Dropdown Fix: Toggle & Arrow Rotation
+         // ================================================================
+    // Dropdown Fix: Arrow Rotation & Toggle Close
     // ================================================================
     private void Spinner(LinearLayout linLayout, final int featNum, final String featName, final String list) {
         final Context ctx = getContext;
         final List<String> lists = new LinkedList<String>(Arrays.asList(list.split(",")));
 
-        final Button btn = new Button(ctx);
-        btn.setLayoutParams(rowLp(6, 3, 6, 3));
-        btn.setAllCaps(false);
-        btn.setGravity(Gravity.LEFT | Gravity.CENTER_VERTICAL);
-        btn.setPadding(dp(12), dp(11), dp(12), dp(11));
-        btn.setBackground(cardBg(COLOR_CARD, COLOR_CARD_BORDER, 6));
-        btn.setTextColor(TEXT_COLOR_2);
-        btn.setTypeface(fontMedium);
-        btn.setTextSize(12f * currentScale);
-        flatten(btn);
-        addPressAnim(btn);
+        final LinearLayout spinnerRow = new LinearLayout(ctx);
+        spinnerRow.setLayoutParams(rowLp(6, 3, 6, 3));
+        spinnerRow.setBackground(cardBg(COLOR_CARD, COLOR_CARD_BORDER, 6));
+        spinnerRow.setGravity(Gravity.CENTER_VERTICAL);
+        spinnerRow.setPadding(dp(12), dp(11), dp(12), dp(11));
+        spinnerRow.setOrientation(LinearLayout.HORIZONTAL);
+
+        final TextView tvName = new TextView(ctx);
+        tvName.setTextColor(TEXT_COLOR_2);
+        tvName.setTypeface(fontMedium);
+        tvName.setTextSize(12f * currentScale);
+        tvName.setLayoutParams(new LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f));
+
+        final ImageView arrowIv = new ImageView(ctx);
+        TabIcon chevIcon = new TabIcon(TabIcon.CHEVRON);
+        chevIcon.setColor(COLOR_ACCENT);
+        arrowIv.setImageDrawable(chevIcon);
+        arrowIv.setLayoutParams(new LinearLayout.LayoutParams(dp(18), dp(18)));
+
+        spinnerRow.addView(tvName);
+        spinnerRow.addView(arrowIv);
 
         final int savedIdx = Preferences.loadPrefInt(featName, featNum);
         final int initIdx = (savedIdx >= 0 && savedIdx < lists.size()) ? savedIdx : 0;
         
-        btn.setText(featName + ": " + lists.get(initIdx));
+        tvName.setText(featName + ": " + lists.get(initIdx));
 
-        final TabIcon chevIcon = new TabIcon(TabIcon.CHEVRON);
-        chevIcon.setColor(COLOR_ACCENT);
-        btn.setCompoundDrawablesWithIntrinsicBounds(null, null, chevIcon, null);
-
-        btn.setOnClickListener(new View.OnClickListener() {
+        spinnerRow.setOnClickListener(new View.OnClickListener() {
             private PopupWindow activePopup = null;
 
             @Override
             public void onClick(View v) {
-                // ★ If popup is already open, close it (Toggle)
+                // ★ Toggle Close: If open, close it
                 if (activePopup != null && activePopup.isShowing()) {
                     activePopup.dismiss();
-                    btn.animate().rotation(0f).setDuration(200).start();
+                    arrowIv.animate().rotation(0f).setDuration(200).start();
                     return;
                 }
 
@@ -3308,20 +3314,19 @@ private void syncToggles(int[] featNums, boolean on) {
                 listLayout.setOrientation(LinearLayout.VERTICAL);
 
                 final PopupWindow popupWindow = new PopupWindow(popupLayout, 
-                        btn.getWidth(), WRAP_CONTENT, true);
+                        spinnerRow.getWidth(), WRAP_CONTENT, true);
                 popupWindow.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
                 popupWindow.setOutsideTouchable(true);
                 popupWindow.setFocusable(false); 
                 activePopup = popupWindow;
 
-                // Rotate arrow
-                btn.animate().rotation(180f).setDuration(200).start();
+                // ★ Rotate only the arrow
+                arrowIv.animate().rotation(180f).setDuration(200).start();
 
-                // Dismiss listener to reset arrow
                 popupWindow.setOnDismissListener(new PopupWindow.OnDismissListener() {
                     @Override
                     public void onDismiss() {
-                        btn.animate().rotation(0f).setDuration(200).start();
+                        arrowIv.animate().rotation(0f).setDuration(200).start();
                     }
                 });
 
@@ -3342,7 +3347,7 @@ private void syncToggles(int[] featNums, boolean on) {
                     tv.setOnClickListener(new View.OnClickListener() {
                         @Override
                         public void onClick(View v) {
-                            btn.setText(featName + ": " + lists.get(index));
+                            tvName.setText(featName + ": " + lists.get(index));
                             Preferences.changeFeatureInt(featName, featNum, index);
                             popupWindow.dismiss();
                         }
@@ -3357,11 +3362,11 @@ private void syncToggles(int[] featNums, boolean on) {
                     popupLayout.addView(scrollView, new LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT));
                 }
 
-                popupWindow.showAsDropDown(btn, 0, 0);
+                popupWindow.showAsDropDown(spinnerRow, 0, 0);
             }
         });
 
-        linLayout.addView(btn);
+        linLayout.addView(spinnerRow);
     }
     
     
