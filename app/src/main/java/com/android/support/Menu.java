@@ -3258,8 +3258,8 @@ private void syncToggles(int[] featNums, boolean on) {
                 break;
         }
     }
-       // ================================================================
-    // Dropdown Fix: Custom PopupWindow Spinner (Crash Fixed)
+        // ================================================================
+    // Dropdown Fix: Toggle & Arrow Rotation
     // ================================================================
     private void Spinner(LinearLayout linLayout, final int featNum, final String featName, final String list) {
         final Context ctx = getContext;
@@ -3282,13 +3282,22 @@ private void syncToggles(int[] featNums, boolean on) {
         
         btn.setText(featName + ": " + lists.get(initIdx));
 
-        TabIcon chevIcon = new TabIcon(TabIcon.CHEVRON);
+        final TabIcon chevIcon = new TabIcon(TabIcon.CHEVRON);
         chevIcon.setColor(COLOR_ACCENT);
         btn.setCompoundDrawablesWithIntrinsicBounds(null, null, chevIcon, null);
 
         btn.setOnClickListener(new View.OnClickListener() {
+            private PopupWindow activePopup = null;
+
             @Override
             public void onClick(View v) {
+                // ★ If popup is already open, close it (Toggle)
+                if (activePopup != null && activePopup.isShowing()) {
+                    activePopup.dismiss();
+                    btn.animate().rotation(0f).setDuration(200).start();
+                    return;
+                }
+
                 LinearLayout popupLayout = new LinearLayout(ctx);
                 popupLayout.setOrientation(LinearLayout.VERTICAL);
                 popupLayout.setBackground(cardBg(COLOR_BG_TOP, withAlpha(COLOR_ACCENT, 0xAA), 8));
@@ -3302,7 +3311,19 @@ private void syncToggles(int[] featNums, boolean on) {
                         btn.getWidth(), WRAP_CONTENT, true);
                 popupWindow.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
                 popupWindow.setOutsideTouchable(true);
-                popupWindow.setFocusable(false); // Prevents game pause
+                popupWindow.setFocusable(false); 
+                activePopup = popupWindow;
+
+                // Rotate arrow
+                btn.animate().rotation(180f).setDuration(200).start();
+
+                // Dismiss listener to reset arrow
+                popupWindow.setOnDismissListener(new PopupWindow.OnDismissListener() {
+                    @Override
+                    public void onDismiss() {
+                        btn.animate().rotation(0f).setDuration(200).start();
+                    }
+                });
 
                 for (int i = 0; i < lists.size(); i++) {
                     final int index = i;
@@ -3313,7 +3334,6 @@ private void syncToggles(int[] featNums, boolean on) {
                     tv.setTextSize(12f * currentScale);
                     tv.setPadding(dp(12), dp(12), dp(12), dp(12));
                     
-                    // Highlight selected
                     if (index == initIdx) {
                         tv.setTextColor(COLOR_ACCENT);
                         tv.setBackground(cardBg(withAlpha(COLOR_ACCENT, 0x1A), 0, 4));
@@ -3330,9 +3350,7 @@ private void syncToggles(int[] featNums, boolean on) {
                     listLayout.addView(tv);
                 }
 
-                // ★ FIX: Add scrollView only ONCE
                 scrollView.addView(listLayout);
-                
                 if (lists.size() > 5) {
                     popupLayout.addView(scrollView, new LinearLayout.LayoutParams(MATCH_PARENT, dp(200)));
                 } else {
@@ -3345,6 +3363,10 @@ private void syncToggles(int[] featNums, boolean on) {
 
         linLayout.addView(btn);
     }
+    
+    
+    
+    
     private void InputNum(LinearLayout linLayout, final int featNum, final String featName, final int maxValue) {
         final Button button = new Button(getContext);
         button.setMinHeight(0);
