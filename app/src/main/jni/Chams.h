@@ -37,20 +37,14 @@ struct Vec4 {
 #define CHAMS_TAG "CHAMS"
 #define CHAMS_LOGI(...) __android_log_print(ANDROID_LOG_INFO, CHAMS_TAG, __VA_ARGS__)
 
-// ================================================================
-//  Global state
-// ================================================================
 static void *handle = nullptr;
 std::vector<std::string> shaders;
 
-int chamsint = 3; // Default: Hybrid Opaque
+int chamsint = 3; 
 bool g_ChamsEnabled = false;
 std::string mineShader = "_Displacement"; 
 float g_MaxDistance = 40.0f; 
 
-// ================================================================
-//  Color Presets
-// ================================================================
 struct ColorPreset { const char* name; Vec4 visible; Vec4 inWall; };
 static const ColorPreset kColorPresets[] = {
     { "Dark Green / Sky Blue", {0.0f, 0.5f, 0.0f, 1.0f}, {0.3f, 0.8f, 1.0f, 1.0f} },
@@ -63,9 +57,6 @@ bool enableRainbow = false, enableRainbowWall = false;
 Vec4 visibleColor = Vec4(0.0f, 0.5f, 0.0f, 1.0f);
 Vec4 inWallColor  = Vec4(0.3f, 0.8f, 1.0f, 1.0f);
 
-// ================================================================
-//  Shader Presets
-// ================================================================
 struct ShaderPreset { const char* name; const char* shader; };
 static const ShaderPreset kShaderPresets[] = {
     { "Trains Only (_Displacement)", "_Displacement" },
@@ -85,9 +76,6 @@ void setShaderPreset(int idx) {
     if (idx >= 0 && idx < kShaderPresetCount) mineShader = kShaderPresets[idx].shader;
 }
 
-// ================================================================
-//  GL function pointers
-// ================================================================
 void (*p_glGetIntegerv)(unsigned int, int *)            = nullptr;
 void (*p_glGetBooleanv)(unsigned int, unsigned char *)  = nullptr;
 void (*p_glBlendColor)(float, float, float, float)      = nullptr;
@@ -111,9 +99,6 @@ int new_glGetUniformLocation(unsigned int program, const char *name) {
     return old_glGetUniformLocation(program, name);
 }
 
-// ================================================================
-//  glDrawElements hook
-// ================================================================
 void (*old_glDrawElements)(unsigned int, int, unsigned int, const void *) = nullptr;
 void new_glDrawElements(unsigned int mode, int count, unsigned int type, const void *indices) {
 
@@ -138,7 +123,6 @@ void new_glDrawElements(unsigned int mode, int count, unsigned int type, const v
         return old_glDrawElements(mode, count, type, indices);
     }
 
-    // ★ Distance Filter (Fixed using matrix translation)
     if (g_MaxDistance > 0.0f) {
         int objLoc = old_glGetUniformLocation(currProgram, "hlslcc_mtx4x4unity_ObjectToWorld[3]");
         int camLoc = old_glGetUniformLocation(currProgram, "_WorldSpaceCameraPos");
@@ -172,14 +156,12 @@ void new_glDrawElements(unsigned int mode, int count, unsigned int type, const v
     p_glEnable(GL_BLEND);
     p_glBlendFunc(GL_ONE, GL_CONSTANT_COLOR); 
 
-    // Mode 1: Solid Visible
     if (chamsint == 1) {
         p_glDepthMask(GL_FALSE); 
         p_glBlendColor(visibleColor.x, visibleColor.y, visibleColor.z, 1.0f);
         old_glDrawElements(mode, count, type, indices);
         p_glDepthMask(GL_TRUE);
     }
-    // Mode 2: X-Ray
     else if (chamsint == 2) {
         p_glDepthMask(GL_FALSE); 
         p_glDisable(GL_DEPTH_TEST);
@@ -190,17 +172,14 @@ void new_glDrawElements(unsigned int mode, int count, unsigned int type, const v
         p_glEnable(GL_CULL_FACE);
         p_glDepthMask(GL_TRUE);
     }
-    // Mode 3: Hybrid Opaque
     else if (chamsint == 3) {
         p_glEnable(GL_DEPTH_TEST);
         p_glDepthFunc(GL_LESS); 
         
-        // 1. Inner walls
         p_glCullFace(GL_FRONT); 
         p_glBlendColor(inWallColor.x, inWallColor.y, inWallColor.z, 1.0f);
         old_glDrawElements(mode, count, type, indices);
 
-        // 2. Outer walls
         p_glCullFace(GL_BACK); 
         p_glBlendColor(visibleColor.x, visibleColor.y, visibleColor.z, 1.0f);
         old_glDrawElements(mode, count, type, indices);

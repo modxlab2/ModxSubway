@@ -22,7 +22,14 @@
 #define LIB OBFUSCATE("libil2cpp.so")
 
 // ================================================================
-//  THREAD-SAFE LOGGER
+//  ★ FIX 1: Vector3 Struct Definition
+// ================================================================
+struct Vector3 {
+    float x, y, z;
+};
+
+// ================================================================
+//  📁 THREAD-SAFE LOGGER
 // ================================================================
 static FILE*             g_LogFile  = nullptr;
 static pthread_mutex_t   g_LogMutex = PTHREAD_MUTEX_INITIALIZER;
@@ -75,7 +82,7 @@ static inline long long nowMs() {
 //   FEATURE STATE
 // ================================================================
 static std::atomic<bool> g_NoGravity          {false};
-static std::atomic<int>  g_GameSpeed          {10}; // Default 1.0 (represented as 10 for slider)
+static std::atomic<int>  g_GameSpeed          {10}; 
 static std::atomic<int>  g_PlayerSpeed        {10};
 static std::atomic<int>  g_PowerDuration      {0};
 static std::atomic<bool> g_FastLaneChange     {false};
@@ -93,41 +100,26 @@ static std::atomic<long long> g_NoCollisionStartMs {0};
 // ================================================================
 //                     ORIGINAL FUNCTION POINTERS
 // ================================================================
-// Player & Movement
 static float (*old_CalculateGravity)(...)           = nullptr;
 static void  (*old_set_SpeedMultiplier)(...)        = nullptr;
 static void  (*old_UnityTimeManager_Update)(...)    = nullptr;
-
-// Powers
 static float (*old_Power_GetTimeLeft)(...)          = nullptr;
 static float (*old_Power_GetDuration)(...)          = nullptr;
-
-// Teleport
 static void  (*old_CharacterMotor_Teleport)(...)    = nullptr;
-
-// Protection
 static void  (*old_set_DisableBoundaryImpact)(...)  = nullptr;
 static void  (*old_MovingTrain_Update)(...)         = nullptr;
 static void  (*old_ChaserGraphics_SetVisible)(...)  = nullptr;
 
-// Revive
+// ★ FIX 2: Added new_CharacterStumble_Revive definition
 static void  (*old_CharacterStumble_Kill)(...)      = nullptr;
 static void  (*old_CharacterStumble_Revive)(...)    = nullptr;
 static int   (*old_get_AvailableKeysForUse)(...)    = nullptr;
-
-// Camera
 static void  (*old_set_FieldOfView)(...)            = nullptr;
-
-// Currency
 static void  (*old_RunSessionData_AddCoins)(...)    = nullptr;
 static void  (*old_RunSessionData_AddKeys)(...)     = nullptr;
 static int   (*old_ConsumeCoinsAndGetRemaining)(...) = nullptr;
 static int   (*old_GetCurrency)(...)                = nullptr;
-
-// Ads
 static bool  (*old_TryShowInterstitial)(...)        = nullptr;
-
-// Gameplay Original
 static bool  (*old_CheckFrontalImpact)(...)     = nullptr;
 static bool  (*old_CheckSideImpact)(...)        = nullptr;
 static int   (*old_get_JumpLimit)(...)          = nullptr;
@@ -140,7 +132,6 @@ static bool  (*old_get_detectCollisions)(...)   = nullptr;
 // ================================================================
 //                       HOOK IMPLEMENTATIONS
 // ================================================================
-// --- Player & Movement ---
 static float new_CalculateGravity(void* self) {
     if (g_NoGravity.load()) return 0.0f;
     return old_CalculateGravity ? old_CalculateGravity(self) : 0.0f;
@@ -155,13 +146,8 @@ static void new_set_SpeedMultiplier(void* self, float value) {
 
 static void new_UnityTimeManager_Update(void* self) {
     if (old_UnityTimeManager_Update) old_UnityTimeManager_Update(self);
-    if (g_GameSpeed.load() != 10) {
-        // Assuming Time.timeScale is at a known offset or accessible via class. 
-        // For safety, we'll assume the hook allows modifying it.
-    }
 }
 
-// --- Powers ---
 static float new_Power_GetTimeLeft(void* self) {
     if (g_PowerDuration.load() > 0) return 999.0f;
     return old_Power_GetTimeLeft ? old_Power_GetTimeLeft(self) : 0.0f;
@@ -171,22 +157,20 @@ static float new_Power_GetDuration(void* self) {
     return old_Power_GetDuration ? old_Power_GetDuration(self) : 0.0f;
 }
 
-// --- Teleport ---
 static void new_CharacterMotor_Teleport(void* self, Vector3 rootPosition) {
     if (g_TeleportDistance.load() > 0 && self) {
         rootPosition.z += (float)g_TeleportDistance.load();
-        g_TeleportDistance.store(0); // Reset after use
+        g_TeleportDistance.store(0); 
     }
     if (old_CharacterMotor_Teleport) old_CharacterMotor_Teleport(self, rootPosition);
 }
 
-// --- Protection ---
 static void new_set_DisableBoundaryImpact(void* self, bool value) {
-    if (old_set_DisableBoundaryImpact) old_set_DisableBoundaryImpact(self, true); // Always true for safety
+    if (old_set_DisableBoundaryImpact) old_set_DisableBoundaryImpact(self, true); 
 }
 
 static void new_MovingTrain_Update(void* self) {
-    if (g_StopTrain.load()) return; // Skip movement
+    if (g_StopTrain.load()) return; 
     if (old_MovingTrain_Update) old_MovingTrain_Update(self);
 }
 
@@ -195,10 +179,14 @@ static void new_ChaserGraphics_SetVisible(void* self, bool visible) {
     if (old_ChaserGraphics_SetVisible) old_ChaserGraphics_SetVisible(self, visible);
 }
 
-// --- Revive ---
+// ★ FIX 2: Definition of new_CharacterStumble_Revive
+static void new_CharacterStumble_Revive(void* self) {
+    if (old_CharacterStumble_Revive) old_CharacterStumble_Revive(self);
+}
+
 static void new_CharacterStumble_Kill(void* self, void* cause) {
     if (g_AutoRevive.load() && old_CharacterStumble_Revive) {
-        old_CharacterStumble_Revive(self); // Call Revive instead
+        old_CharacterStumble_Revive(self); 
         return;
     }
     if (old_CharacterStumble_Kill) old_CharacterStumble_Kill(self, cause);
@@ -209,13 +197,11 @@ static int new_get_AvailableKeysForUse(void* self) {
     return old_get_AvailableKeysForUse ? old_get_AvailableKeysForUse(self) : 0;
 }
 
-// --- Camera ---
 static void new_set_FieldOfView(void* self, float value) {
     if (g_FOV.load() > 0) value = (float)g_FOV.load();
     if (old_set_FieldOfView) old_set_FieldOfView(self, value);
 }
 
-// --- Currency & Ads ---
 static void new_RunSessionData_AddCoins(void* self, int coins) {
     if (g_UnlimitedCoins.load()) coins = 2000000000;
     if (old_RunSessionData_AddCoins) old_RunSessionData_AddCoins(self, coins);
@@ -242,7 +228,6 @@ static bool new_TryShowInterstitial(void* self, void* location) {
     return old_TryShowInterstitial ? old_TryShowInterstitial(self, location) : false;
 }
 
-// --- Gameplay ---
 static bool new_CheckFrontalImpact(void* self, void* other) {
     if (!self) return false;
     if (g_NoCollision.load()) return false;
@@ -257,7 +242,7 @@ static bool new_CheckSideImpact(void* self, void* other) {
 
 static int new_get_JumpLimit(void* self) {
     if (!self) return 0;
-    int v = g_AutoRevive.load() ? 999 : 0; // placeholder
+    int v = g_AutoRevive.load() ? 999 : 0; 
     return (v > 0) ? v : (old_get_JumpLimit ? old_get_JumpLimit(self) : 0);
 }
 
@@ -303,7 +288,6 @@ void* hack_thread(void*) {
     while (!isLibraryLoaded(LIB)) sleep(1);
     sleep(3);
 
-    // --- Player & Movement ---
     {
         auto CMA = new LoadClass(OBFUSCATE("SYBO.RunnerCore.Character"), OBFUSCATE("CharacterMotorAbilities"));
         if (CMA && CMA->thisclass) {
@@ -326,8 +310,6 @@ void* hack_thread(void*) {
             if (oUpdate) HOOK_AU((void*)oUpdate, (void*)new_UnityTimeManager_Update, old_UnityTimeManager_Update);
         }
     }
-
-    // --- Powers ---
     {
         auto P = new LoadClass(OBFUSCATE(""), OBFUSCATE("Power"));
         if (P && P->thisclass) {
@@ -337,8 +319,6 @@ void* hack_thread(void*) {
             if (oDur) HOOK_AU((void*)oDur, (void*)new_Power_GetDuration, old_Power_GetDuration);
         }
     }
-
-    // --- Teleport ---
     {
         auto CM = new LoadClass(OBFUSCATE("SYBO.RunnerCore.Character"), OBFUSCATE("CharacterMotor"));
         if (CM && CM->thisclass) {
@@ -352,8 +332,6 @@ void* hack_thread(void*) {
             if (oSide) HOOK_AU((void*)oSide, (void*)new_CheckSideImpact, old_CheckSideImpact);
         }
     }
-
-    // --- Protection ---
     {
         auto MT = new LoadClass(OBFUSCATE(""), OBFUSCATE("MovingTrain"));
         if (MT && MT->thisclass) {
@@ -366,12 +344,10 @@ void* hack_thread(void*) {
             if (oVisible) HOOK_AU((void*)oVisible, (void*)new_ChaserGraphics_SetVisible, old_ChaserGraphics_SetVisible);
         }
     }
-
-    // --- Revive ---
     {
         auto CS = new LoadClass(OBFUSCATE(""), OBFUSCATE("CharacterStumble"));
         if (CS && CS->thisclass) {
-            DWORD oKill = CS->GetMethodOffsetByName(OBFUSCATE("Kill"), 1); // Assuming 1 param
+            DWORD oKill = CS->GetMethodOffsetByName(OBFUSCATE("Kill"), 1); 
             DWORD oRevive = CS->GetMethodOffsetByName(OBFUSCATE("Revive"), 0);
             if (oKill) HOOK_AU((void*)oKill, (void*)new_CharacterStumble_Kill, old_CharacterStumble_Kill);
             if (oRevive) HOOK_AU((void*)oRevive, (void*)new_CharacterStumble_Revive, old_CharacterStumble_Revive);
@@ -388,8 +364,6 @@ void* hack_thread(void*) {
             if (oAddKeys) HOOK_AU((void*)oAddKeys, (void*)new_RunSessionData_AddKeys, old_RunSessionData_AddKeys);
         }
     }
-
-    // --- Camera ---
     {
         auto CC = new LoadClass(OBFUSCATE(""), OBFUSCATE("CameraContext"));
         if (CC && CC->thisclass) {
@@ -397,8 +371,6 @@ void* hack_thread(void*) {
             if (oFov) HOOK_AU((void*)oFov, (void*)new_set_FieldOfView, old_set_FieldOfView);
         }
     }
-
-    // --- Currency & Ads ---
     {
         auto IH = new LoadClass(OBFUSCATE(""), OBFUSCATE("InterstitialsHelper"));
         if (IH && IH->thisclass) {
@@ -411,8 +383,6 @@ void* hack_thread(void*) {
             if (oC) HOOK_AU((void*)oC, (void*)new_GetCurrency, old_GetCurrency);
         }
     }
-
-    // --- Gameplay Core ---
     {
         auto SB = new LoadClass(OBFUSCATE("SYBO.Subway"), OBFUSCATE("StumbleBehaviour"));
         if (SB && SB->thisclass) {
@@ -442,7 +412,6 @@ void* hack_thread(void*) {
 jobjectArray GetFeatureList(JNIEnv* env, jobject) {
     jobjectArray ret;
     const char* features[] = {
-
         OBFUSCATE("Category_Player & Movement"),
         OBFUSCATE("200_Toggle_No Gravity"),
         OBFUSCATE("201_SeekBar_Game Speed_1_20"),
@@ -479,9 +448,6 @@ jobjectArray GetFeatureList(JNIEnv* env, jobject) {
         OBFUSCATE("216_SeekBar_Score Multiplier_0_999"),
         OBFUSCATE("217_Toggle_Fast Lane Change"),
 
-        // ============================================================
-        //  ★ CHAMS TAB
-        // ============================================================
         OBFUSCATE("Category_Chams"),
         OBFUSCATE("119_Toggle_Enable Chams"),
         OBFUSCATE("120_Spinner_Chams Mode_Off,Solid Visible,X-Ray,Hybrid Opaque"),
@@ -510,38 +476,21 @@ void Changes(JNIEnv*, jclass, jobject,
              jlong, jboolean boolean, jstring) {
 
     switch (featNum) {
-        // --- Player & Movement ---
         case 200: g_NoGravity.store(boolean); break;
         case 201: g_GameSpeed.store(value); break;
         case 202: g_PlayerSpeed.store(value); break;
-
-        // --- Powers ---
         case 203: g_PowerDuration.store(boolean ? 999 : 0); break;
-        case 204: g_PowerDuration.store(boolean ? 999 : 0); break; // Jetpack uses same hook
-
-        // --- Teleport ---
+        case 204: g_PowerDuration.store(boolean ? 999 : 0); break;
         case 205: g_TeleportDistance.store(value); break;
-
-        // --- Protection ---
-        case 206: g_NoCollision.store(boolean); break; // Fallback to no collision
+        case 206: g_NoCollision.store(boolean); break;
         case 207: g_StopTrain.store(boolean); break;
         case 208: g_NoGuardChaser.store(boolean); break;
-
-        // --- Revive ---
         case 209: g_AutoRevive.store(boolean); break;
         case 210: g_AutoRevive.store(boolean); break;
-
-        // --- Camera ---
         case 211: g_FOV.store(value); break;
-
-        // --- Currency ---
         case 212: g_UnlimitedCoins.store(boolean); break;
         case 213: g_UnlimitedCoins.store(boolean); break;
-
-        // --- Ads ---
         case 214: g_NoAds.store(boolean); break;
-
-        // --- Gameplay ---
         case 215: {
             g_NoCollision.store(boolean);
             if (boolean) g_NoCollisionStartMs.store(nowMs());
@@ -549,8 +498,6 @@ void Changes(JNIEnv*, jclass, jobject,
         } break;
         case 216: g_ScoreMultiplier.store(value); break;
         case 217: g_FastLaneChange.store(boolean); break;
-
-        // --- Chams ---
         case 119: g_ChamsEnabled = boolean; break;
         case 120: chamsint = value; break;
         case 125: setColorPreset(value); break;
@@ -558,7 +505,6 @@ void Changes(JNIEnv*, jclass, jobject,
         case 127: g_MaxDistance = (float)value; break;
         case 121: enableRainbow = boolean; break;
         case 122: enableRainbowWall = boolean; break;
-
         default: break;
     }
 }
