@@ -3261,7 +3261,7 @@ private void syncToggles(int[] featNums, boolean on) {
          // ================================================================
     // Perfect Inline Dropdown (No PopupWindow, No Bugs)
     // ================================================================
-        private void Spinner(LinearLayout linLayout, final int featNum, final String featName, final String list) {
+            private void Spinner(LinearLayout linLayout, final int featNum, final String featName, final String list) {
         final Context ctx = getContext;
         final List<String> lists = new LinkedList<String>(Arrays.asList(list.split(",")));
 
@@ -3316,7 +3316,8 @@ private void syncToggles(int[] featNums, boolean on) {
                 final PopupWindow popupWindow = new PopupWindow(popupLayout, 
                         spinnerRow.getWidth(), WRAP_CONTENT, true);
                 popupWindow.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
-                popupWindow.setOutsideTouchable(false); // ★ Fixed: Prevents instant close
+                // ★ According to Android Docs & StackOverflow: Both must be false for Toggle to work
+                popupWindow.setOutsideTouchable(false); 
                 popupWindow.setFocusable(false); 
                 activePopup = popupWindow;
 
