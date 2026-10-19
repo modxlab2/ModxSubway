@@ -45,21 +45,21 @@ std::vector<std::string> shaders;
 int chamsint = 3; // Default: Hybrid Professional
 bool g_ChamsEnabled = false;
 std::string mineShader = "_Displacement"; 
-float g_MaxDistance = 35.0f; // ★ Tight distance to block far trains
+float g_MaxDistance = 40.0f; // ★ Default distance
 
 // ================================================================
-//  Color Presets (Perfect Solid Colors)
+//  Color Presets (Original colors kept intact)
 // ================================================================
 struct ColorPreset { const char* name; Vec4 visible; Vec4 inWall; };
 static const ColorPreset kColorPresets[] = {
-    { "Dark Green / Sky Blue", {0.0f, 0.6f, 0.0f, 1.0f}, {0.3f, 0.8f, 1.0f, 1.0f} },
+    { "Dark Green / Sky Blue", {0.0f, 0.5f, 0.0f, 1.0f}, {0.3f, 0.8f, 1.0f, 1.0f} },
     { "Neon Green / Red",      {0.0f, 1.0f, 0.0f, 1.0f}, {1.0f, 0.0f, 0.0f, 1.0f} },
     { "Cyan / Magenta",        {0.0f, 1.0f, 1.0f, 1.0f}, {1.0f, 0.0f, 1.0f, 1.0f} },
 };
 static const int kColorPresetCount = sizeof(kColorPresets) / sizeof(kColorPresets[0]);
 
 bool enableRainbow = false, enableRainbowWall = false;
-Vec4 visibleColor = Vec4(0.0f, 0.6f, 0.0f, 1.0f);
+Vec4 visibleColor = Vec4(0.0f, 0.5f, 0.0f, 1.0f);
 Vec4 inWallColor  = Vec4(0.3f, 0.8f, 1.0f, 1.0f);
 
 // ================================================================
@@ -111,7 +111,7 @@ int new_glGetUniformLocation(unsigned int program, const char *name) {
 }
 
 // ================================================================
-//  glDrawElements hook — Final Perfect Fix
+//  glDrawElements hook — Final Perfect Distance Fix
 // ================================================================
 void (*old_glDrawElements)(unsigned int, int, unsigned int, const void *) = nullptr;
 void new_glDrawElements(unsigned int mode, int count, unsigned int type, const void *indices) {
@@ -137,23 +137,32 @@ void new_glDrawElements(unsigned int mode, int count, unsigned int type, const v
         return old_glDrawElements(mode, count, type, indices);
     }
 
-    // ★ Deep Distance & Lane Filter
+    // ★ Distance Logic using View Matrix (Reliable Method)
     if (g_MaxDistance > 0.0f) {
         int objLoc = old_glGetUniformLocation(currProgram, "hlslcc_mtx4x4unity_ObjectToWorld[0]");
-        int camLoc = old_glGetUniformLocation(currProgram, "_WorldSpaceCameraPos");
-        if (objLoc != -1 && camLoc != -1) {
-            float mat[16];
-            float cam[3];
-            p_glGetUniformfv(currProgram, objLoc, mat);
-            p_glGetUniformfv(currProgram, camLoc, cam);
+        int viewLoc = old_glGetUniformLocation(currProgram, "hlslcc_mtx4x4unity_MatrixV[0]");
+        if (objLoc != -1 && viewLoc != -1) {
+            float objMat[16];
+            float viewMat[16];
+            p_glGetUniformfv(currProgram, objLoc, objMat);
+            p_glGetUniformfv(currProgram, viewLoc, viewMat);
             
-            float dx = mat[12] - cam[0];
-            float dz = mat[14] - cam[2];
+            // Get object's world position
+            float worldX = objMat[12];
+            float worldY = objMat[13];
+            float worldZ = objMat[14];
             
-            // Filter side lanes (X-axis > 4.0 means side train)
-            if (fabs(dx) > 4.0f) return old_glDrawElements(mode, count, type, indices);
-            // Filter far trains (Z-axis > MaxDistance)
-            if (fabs(dz) > g_MaxDistance) return old_glDrawElements(mode, count, type, indices);
+            // Transform world position to view space
+            float viewX = viewMat[0]*worldX + viewMat[4]*worldY + viewMat[8]*worldZ + viewMat[12];
+            float viewY = viewMat[1]*worldX + viewMat[5]*worldY + viewMat[9]*worldZ + viewMat[13];
+            float viewZ = viewMat[2]*worldX + viewMat[6]*worldY + viewMat[10]*worldZ + viewMat[14];
+            
+            // In view space, camera looks down -Z. So distance is -viewZ.
+            float dist = -viewZ;
+            
+            if (dist > g_MaxDistance) {
+                return old_glDrawElements(mode, count, type, indices);
+            }
         }
     }
 
@@ -169,8 +178,8 @@ void new_glDrawElements(unsigned int mode, int count, unsigned int type, const v
     old_glDrawElements(mode, count, type, indices);
 
     p_glEnable(GL_BLEND);
-    // ★ GL_ZERO removes original texture color, GL_CONSTANT_COLOR applies our color.
-    p_glBlendFunc(GL_CONSTANT_COLOR, GL_ZERO); 
+    // ★ Original blending restored (keeps the original color scheme)
+    p_glBlendFunc(GL_ONE, GL_CONSTANT_COLOR); 
 
     // Mode 1: Solid Visible
     if (chamsint == 1) {
@@ -192,7 +201,7 @@ void new_glDrawElements(unsigned int mode, int count, unsigned int type, const v
     }
     // Mode 3: Hybrid Professional
     else if (chamsint == 3) {
-        // 1. Inner walls (Sky Blue) - ONLY BEHIND CHARACTER
+        // 1. Inner walls (Sky Blue)
         p_glEnable(GL_DEPTH_TEST);
         p_glDepthFunc(GL_GREATER); 
         p_glDisable(GL_CULL_FACE); 
