@@ -613,7 +613,7 @@ void* hack_thread(void*) {
 
     LOGI("[11/14] Hooking Ads...");
     {
-        auto IH = new LoadClass(OBFUSCATE("SYBO.Ads"), OBFUSCATE("InterstitialsHelper"));
+        auto IH = new LoadClass(OBFUSCATE("SYBO.Subway"), OBFUSCATE("InterstitialsHelper"));
         if (IH && IH->thisclass) {
             DWORD oInter = IH->GetMethodOffsetByName(OBFUSCATE("TryShowInterstitial"), 1);
             DWORD oPlace = IH->GetMethodOffsetByName(OBFUSCATE("TryShowPlacement"), 1);
