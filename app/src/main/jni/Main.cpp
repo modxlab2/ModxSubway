@@ -21,9 +21,6 @@
 
 #define LIB OBFUSCATE("libil2cpp.so")
 
-// ================================================================
-//  ★ FIX 1: Vector3 Struct Definition
-// ================================================================
 struct Vector3 {
     float x, y, z;
 };
@@ -79,8 +76,12 @@ static inline long long nowMs() {
 }
 
 // ================================================================
-//   FEATURE STATE
+//   FEATURE STATE (Added Missing States)
 // ================================================================
+static std::atomic<bool> g_FrontalImpact      {false};
+static std::atomic<bool> g_SideImpact         {false};
+static std::atomic<int>  g_JumpLimit          {0};
+static std::atomic<int>  g_JumpHeight         {0};
 static std::atomic<bool> g_NoGravity          {false};
 static std::atomic<int>  g_GameSpeed          {10}; 
 static std::atomic<int>  g_PlayerSpeed        {10};
@@ -110,7 +111,6 @@ static void  (*old_set_DisableBoundaryImpact)(...)  = nullptr;
 static void  (*old_MovingTrain_Update)(...)         = nullptr;
 static void  (*old_ChaserGraphics_SetVisible)(...)  = nullptr;
 
-// ★ FIX 2: Added new_CharacterStumble_Revive definition
 static void  (*old_CharacterStumble_Kill)(...)      = nullptr;
 static void  (*old_CharacterStumble_Revive)(...)    = nullptr;
 static int   (*old_get_AvailableKeysForUse)(...)    = nullptr;
@@ -166,7 +166,8 @@ static void new_CharacterMotor_Teleport(void* self, Vector3 rootPosition) {
 }
 
 static void new_set_DisableBoundaryImpact(void* self, bool value) {
-    if (old_set_DisableBoundaryImpact) old_set_DisableBoundaryImpact(self, true); 
+    if (g_NoCollision.load()) value = true;
+    if (old_set_DisableBoundaryImpact) old_set_DisableBoundaryImpact(self, value); 
 }
 
 static void new_MovingTrain_Update(void* self) {
@@ -179,7 +180,6 @@ static void new_ChaserGraphics_SetVisible(void* self, bool visible) {
     if (old_ChaserGraphics_SetVisible) old_ChaserGraphics_SetVisible(self, visible);
 }
 
-// ★ FIX 2: Definition of new_CharacterStumble_Revive
 static void new_CharacterStumble_Revive(void* self) {
     if (old_CharacterStumble_Revive) old_CharacterStumble_Revive(self);
 }
@@ -223,32 +223,32 @@ static int new_GetCurrency(void* self, int currencyType) {
     return old_GetCurrency ? old_GetCurrency(self, currencyType) : 0;
 }
 
-static bool new_TryShowInterstitial(void* self, void* location) {
+static bool new_TryShowInterstitial(void* self, int location) { // Fixed: void* to int
     if (g_NoAds.load()) return false;
     return old_TryShowInterstitial ? old_TryShowInterstitial(self, location) : false;
 }
 
 static bool new_CheckFrontalImpact(void* self, void* other) {
     if (!self) return false;
-    if (g_NoCollision.load()) return false;
+    if (g_FrontalImpact.load()) return false;
     return old_CheckFrontalImpact ? old_CheckFrontalImpact(self, other) : false;
 }
 
 static bool new_CheckSideImpact(void* self, void* other) {
     if (!self) return false;
-    if (g_NoCollision.load()) return false;
+    if (g_SideImpact.load()) return false;
     return old_CheckSideImpact ? old_CheckSideImpact(self, other) : false;
 }
 
 static int new_get_JumpLimit(void* self) {
     if (!self) return 0;
-    int v = g_AutoRevive.load() ? 999 : 0; 
+    int v = g_JumpLimit.load(); 
     return (v > 0) ? v : (old_get_JumpLimit ? old_get_JumpLimit(self) : 0);
 }
 
 static float new_get_JumpHeight(void* self) {
     if (!self) return 0.0f;
-    int v = g_AutoRevive.load() ? 200 : 0;
+    int v = g_JumpHeight.load();
     return (v > 0) ? (float)v : (old_get_JumpHeight ? old_get_JumpHeight(self) : 0.0f);
 }
 
@@ -289,6 +289,19 @@ void* hack_thread(void*) {
     sleep(3);
 
     {
+        auto CM = new LoadClass(OBFUSCATE("SYBO.RunnerCore.Character"), OBFUSCATE("CharacterMotor"));
+        if (CM && CM->thisclass) {
+            DWORD oTele = CM->GetMethodOffsetByName(OBFUSCATE("Teleport"), 1);
+            DWORD oBound = CM->GetMethodOffsetByName(OBFUSCATE("set_DisableBoundaryImpact"), 1);
+            DWORD oFrontal = CM->GetMethodOffsetByName(OBFUSCATE("CheckFrontalImpact"), 1);
+            DWORD oSide    = CM->GetMethodOffsetByName(OBFUSCATE("CheckSideImpact"),    1);
+            if (oTele) HOOK_AU((void*)oTele, (void*)new_CharacterMotor_Teleport, old_CharacterMotor_Teleport);
+            if (oBound) HOOK_AU((void*)oBound, (void*)new_set_DisableBoundaryImpact, old_set_DisableBoundaryImpact);
+            if (oFrontal) HOOK_AU((void*)oFrontal, (void*)new_CheckFrontalImpact, old_CheckFrontalImpact);
+            if (oSide) HOOK_AU((void*)oSide, (void*)new_CheckSideImpact, old_CheckSideImpact);
+        }
+    }
+    {
         auto CMA = new LoadClass(OBFUSCATE("SYBO.RunnerCore.Character"), OBFUSCATE("CharacterMotorAbilities"));
         if (CMA && CMA->thisclass) {
             DWORD oGrav = CMA->GetMethodOffsetByName(OBFUSCATE("CalculateGravity"), 0);
@@ -304,14 +317,7 @@ void* hack_thread(void*) {
         }
     }
     {
-        auto UTM = new LoadClass(OBFUSCATE(""), OBFUSCATE("UnityTimeManager"));
-        if (UTM && UTM->thisclass) {
-            DWORD oUpdate = UTM->GetMethodOffsetByName(OBFUSCATE("Update"), 0);
-            if (oUpdate) HOOK_AU((void*)oUpdate, (void*)new_UnityTimeManager_Update, old_UnityTimeManager_Update);
-        }
-    }
-    {
-        auto P = new LoadClass(OBFUSCATE(""), OBFUSCATE("Power"));
+        auto P = new LoadClass(OBFUSCATE("SYBO.RunnerCore.Powers"), OBFUSCATE("Power"));
         if (P && P->thisclass) {
             DWORD oTimeLeft = P->GetMethodOffsetByName(OBFUSCATE("GetTimeLeft"), 0);
             DWORD oDur = P->GetMethodOffsetByName(OBFUSCATE("GetDuration"), 0);
@@ -320,39 +326,26 @@ void* hack_thread(void*) {
         }
     }
     {
-        auto CM = new LoadClass(OBFUSCATE("SYBO.RunnerCore.Character"), OBFUSCATE("CharacterMotor"));
-        if (CM && CM->thisclass) {
-            DWORD oTele = CM->GetMethodOffsetByName(OBFUSCATE("Teleport"), 1);
-            DWORD oBound = CM->GetMethodOffsetByName(OBFUSCATE("set_DisableBoundaryImpact"), 1);
-            DWORD oFrontal = CM->GetMethodOffsetByName(OBFUSCATE("CheckFrontalImpact"), 1);
-            DWORD oSide    = CM->GetMethodOffsetByName(OBFUSCATE("CheckSideImpact"),    1);
-            if (oTele) HOOK_AU((void*)oTele, (void*)new_CharacterMotor_Teleport, old_CharacterMotor_Teleport);
-            if (oBound) HOOK_AU((void*)oBound, (void*)new_set_DisableBoundaryImpact, old_set_DisableBoundaryImpact);
-            if (oFrontal) HOOK_AU((void*)oFrontal, (void*)new_CheckFrontalImpact, old_CheckFrontalImpact);
-            if (oSide) HOOK_AU((void*)oSide, (void*)new_CheckSideImpact, old_CheckSideImpact);
-        }
-    }
-    {
-        auto MT = new LoadClass(OBFUSCATE(""), OBFUSCATE("MovingTrain"));
+        auto MT = new LoadClass(OBFUSCATE("SYBO.Subway"), OBFUSCATE("MovingTrain"));
         if (MT && MT->thisclass) {
             DWORD oUpdate = MT->GetMethodOffsetByName(OBFUSCATE("Update"), 0);
             if (oUpdate) HOOK_AU((void*)oUpdate, (void*)new_MovingTrain_Update, old_MovingTrain_Update);
         }
-        auto CG = new LoadClass(OBFUSCATE(""), OBFUSCATE("ChaserGraphics"));
+        auto CG = new LoadClass(OBFUSCATE("SYBO.Subway"), OBFUSCATE("ChaserGraphics"));
         if (CG && CG->thisclass) {
             DWORD oVisible = CG->GetMethodOffsetByName(OBFUSCATE("SetVisible"), 1);
             if (oVisible) HOOK_AU((void*)oVisible, (void*)new_ChaserGraphics_SetVisible, old_ChaserGraphics_SetVisible);
         }
     }
     {
-        auto CS = new LoadClass(OBFUSCATE(""), OBFUSCATE("CharacterStumble"));
+        auto CS = new LoadClass(OBFUSCATE("SYBO.Subway"), OBFUSCATE("CharacterStumble"));
         if (CS && CS->thisclass) {
             DWORD oKill = CS->GetMethodOffsetByName(OBFUSCATE("Kill"), 1); 
             DWORD oRevive = CS->GetMethodOffsetByName(OBFUSCATE("Revive"), 0);
             if (oKill) HOOK_AU((void*)oKill, (void*)new_CharacterStumble_Kill, old_CharacterStumble_Kill);
             if (oRevive) HOOK_AU((void*)oRevive, (void*)new_CharacterStumble_Revive, old_CharacterStumble_Revive);
         }
-        auto RSD = new LoadClass(OBFUSCATE(""), OBFUSCATE("RunSessionData"));
+        auto RSD = new LoadClass(OBFUSCATE("SYBO.Subway"), OBFUSCATE("RunSessionData"));
         if (RSD && RSD->thisclass) {
             DWORD oKeys = RSD->GetMethodOffsetByName(OBFUSCATE("get_AvailableKeysForUse"), 0);
             DWORD oCoins = RSD->GetMethodOffsetByName(OBFUSCATE("ConsumeCoinsAndGetRemaining"), 1);
@@ -365,14 +358,14 @@ void* hack_thread(void*) {
         }
     }
     {
-        auto CC = new LoadClass(OBFUSCATE(""), OBFUSCATE("CameraContext"));
+        auto CC = new LoadClass(OBFUSCATE("SYBO.Subway"), OBFUSCATE("CameraContext"));
         if (CC && CC->thisclass) {
             DWORD oFov = CC->GetMethodOffsetByName(OBFUSCATE("set_FieldOfView"), 1);
             if (oFov) HOOK_AU((void*)oFov, (void*)new_set_FieldOfView, old_set_FieldOfView);
         }
     }
     {
-        auto IH = new LoadClass(OBFUSCATE(""), OBFUSCATE("InterstitialsHelper"));
+        auto IH = new LoadClass(OBFUSCATE("SYBO.Ads"), OBFUSCATE("InterstitialsHelper"));
         if (IH && IH->thisclass) {
             DWORD oInter = IH->GetMethodOffsetByName(OBFUSCATE("TryShowInterstitial"), 1);
             if (oInter) HOOK_AU((void*)oInter, (void*)new_TryShowInterstitial, old_TryShowInterstitial);
@@ -381,6 +374,13 @@ void* hack_thread(void*) {
         if (WM && WM->thisclass) {
             DWORD oC = WM->GetMethodOffsetByName(OBFUSCATE("GetCurrency"), 1);
             if (oC) HOOK_AU((void*)oC, (void*)new_GetCurrency, old_GetCurrency);
+        }
+    }
+    {
+        auto UTM = new LoadClass(OBFUSCATE("SYBO.Subway"), OBFUSCATE("UnityTimeManager"));
+        if (UTM && UTM->thisclass) {
+            DWORD oUpdate = UTM->GetMethodOffsetByName(OBFUSCATE("Update"), 0);
+            if (oUpdate) HOOK_AU((void*)oUpdate, (void*)new_UnityTimeManager_Update, old_UnityTimeManager_Update);
         }
     }
     {
@@ -412,6 +412,12 @@ void* hack_thread(void*) {
 jobjectArray GetFeatureList(JNIEnv* env, jobject) {
     jobjectArray ret;
     const char* features[] = {
+        // Main Modes
+        OBFUSCATE("800_ButtonOnOff_Simple Mode"),
+        OBFUSCATE("801_ButtonOnOff_Max Mode"),
+        OBFUSCATE("802_ButtonOnOff_Ultra Max Mode"),
+        OBFUSCATE("803_ButtonOnOff_None (Reset)"),
+
         OBFUSCATE("Category_Player & Movement"),
         OBFUSCATE("200_Toggle_No Gravity"),
         OBFUSCATE("201_SeekBar_Game Speed_1_20"),
@@ -419,34 +425,34 @@ jobjectArray GetFeatureList(JNIEnv* env, jobject) {
 
         OBFUSCATE("Category_Powers"),
         OBFUSCATE("203_Toggle_Unlimited Power Time"),
-        OBFUSCATE("204_Toggle_Unlimited Jetpack Time"),
 
         OBFUSCATE("Category_Teleport"),
         OBFUSCATE("205_SeekBar_Teleport Distance_0_5000"),
 
         OBFUSCATE("Category_Protection"),
-        OBFUSCATE("206_Toggle_Disable Boundary Impact"),
         OBFUSCATE("207_Toggle_Stop Moving Train"),
         OBFUSCATE("208_Toggle_No Guard Chaser"),
 
         OBFUSCATE("Category_Revive"),
         OBFUSCATE("209_Toggle_Auto Revive"),
-        OBFUSCATE("210_Toggle_Revive Key Limit Bypass"),
 
         OBFUSCATE("Category_Camera"),
         OBFUSCATE("211_SeekBar_Custom Camera FOV_0_120"),
 
         OBFUSCATE("Category_Currency"),
         OBFUSCATE("212_Toggle_Unlimited Coins"),
-        OBFUSCATE("213_Toggle_Unlimited Keys"),
 
         OBFUSCATE("Category_Ads"),
         OBFUSCATE("214_Toggle_Completely No Ads"),
 
         OBFUSCATE("Category_Gameplay"),
-        OBFUSCATE("215_Toggle_No Collision"),
-        OBFUSCATE("216_SeekBar_Score Multiplier_0_999"),
-        OBFUSCATE("217_Toggle_Fast Lane Change"),
+        OBFUSCATE("100_Toggle_No Head-On Collision"),
+        OBFUSCATE("101_Toggle_No Side Collision"),
+        OBFUSCATE("102_SeekBar_Jump Limit_0_999"),
+        OBFUSCATE("103_SeekBar_Jump Height_0_200"),
+        OBFUSCATE("106_Toggle_Fast Lane Change"),
+        OBFUSCATE("107_SeekBar_Score Multiplier_0_999"),
+        OBFUSCATE("108_Toggle_No Collision Detect"),
 
         OBFUSCATE("Category_Chams"),
         OBFUSCATE("119_Toggle_Enable Chams"),
@@ -476,28 +482,106 @@ void Changes(JNIEnv*, jclass, jobject,
              jlong, jboolean boolean, jstring) {
 
     switch (featNum) {
-        case 200: g_NoGravity.store(boolean); break;
-        case 201: g_GameSpeed.store(value); break;
-        case 202: g_PlayerSpeed.store(value); break;
-        case 203: g_PowerDuration.store(boolean ? 999 : 0); break;
-        case 204: g_PowerDuration.store(boolean ? 999 : 0); break;
-        case 205: g_TeleportDistance.store(value); break;
-        case 206: g_NoCollision.store(boolean); break;
-        case 207: g_StopTrain.store(boolean); break;
-        case 208: g_NoGuardChaser.store(boolean); break;
-        case 209: g_AutoRevive.store(boolean); break;
-        case 210: g_AutoRevive.store(boolean); break;
-        case 211: g_FOV.store(value); break;
-        case 212: g_UnlimitedCoins.store(boolean); break;
-        case 213: g_UnlimitedCoins.store(boolean); break;
-        case 214: g_NoAds.store(boolean); break;
-        case 215: {
+        // ----- Modes -----
+        case 800: { // Simple
+            g_FrontalImpact.store(boolean);
+            g_SideImpact.store(boolean);
+            g_AutoRevive.store(boolean);
+            g_UnlimitedCoins.store(boolean);
+            g_JumpLimit.store(0);
+            g_JumpHeight.store(0);
+            g_NoCollision.store(false);
+            g_FastLaneChange.store(false);
+            g_ScoreMultiplier.store(0);
+        } break;
+        case 801: { // Max
+            if (boolean) {
+                g_FrontalImpact.store(true);
+                g_SideImpact.store(true);
+                g_AutoRevive.store(true);
+                g_UnlimitedCoins.store(true);
+                g_JumpLimit.store(100);
+                g_JumpHeight.store(50);
+                g_FastLaneChange.store(true);
+                g_ScoreMultiplier.store(10);
+                g_NoCollision.store(false);
+            } else {
+                g_JumpLimit.store(0);
+                g_JumpHeight.store(0);
+                g_FastLaneChange.store(false);
+                g_ScoreMultiplier.store(0);
+            }
+        } break;
+        case 802: { // Ultra Max
+            if (boolean) {
+                g_FrontalImpact.store(true);
+                g_SideImpact.store(true);
+                g_AutoRevive.store(true);
+                g_UnlimitedCoins.store(true);
+                g_JumpLimit.store(999);
+                g_JumpHeight.store(200);
+                g_FastLaneChange.store(true);
+                g_ScoreMultiplier.store(999);
+                g_NoCollision.store(true);
+                g_StopTrain.store(true);
+                g_NoGuardChaser.store(true);
+                g_NoAds.store(true);
+            } else {
+                g_JumpLimit.store(0);
+                g_JumpHeight.store(0);
+                g_FastLaneChange.store(false);
+                g_ScoreMultiplier.store(0);
+                g_NoCollision.store(false);
+                g_StopTrain.store(false);
+                g_NoGuardChaser.store(false);
+                g_NoAds.store(false);
+            }
+        } break;
+        case 803: { // Reset
+            g_FrontalImpact.store(false);
+            g_SideImpact.store(false);
+            g_AutoRevive.store(false);
+            g_UnlimitedCoins.store(false);
+            g_JumpLimit.store(0);
+            g_JumpHeight.store(0);
+            g_NoCollision.store(false);
+            g_FastLaneChange.store(false);
+            g_ScoreMultiplier.store(0);
+            g_StopTrain.store(false);
+            g_NoGuardChaser.store(false);
+            g_NoAds.store(false);
+            g_NoGravity.store(false);
+            g_GameSpeed.store(10);
+            g_PlayerSpeed.store(10);
+            g_FOV.store(60);
+            g_TeleportDistance.store(0);
+        } break;
+
+        // ----- Individual -----
+        case 100: g_FrontalImpact.store(boolean); break;
+        case 101: g_SideImpact.store(boolean); break;
+        case 102: g_JumpLimit.store(value); break;
+        case 103: g_JumpHeight.store(value); break;
+        case 106: g_FastLaneChange.store(boolean); break;
+        case 107: g_ScoreMultiplier.store(value); break;
+        case 108: {
             g_NoCollision.store(boolean);
             if (boolean) g_NoCollisionStartMs.store(nowMs());
             else         g_NoCollisionStartMs.store(0);
         } break;
-        case 216: g_ScoreMultiplier.store(value); break;
-        case 217: g_FastLaneChange.store(boolean); break;
+        case 200: g_NoGravity.store(boolean); break;
+        case 201: g_GameSpeed.store(value); break;
+        case 202: g_PlayerSpeed.store(value); break;
+        case 203: g_PowerDuration.store(boolean ? 999 : 0); break;
+        case 205: g_TeleportDistance.store(value); break;
+        case 207: g_StopTrain.store(boolean); break;
+        case 208: g_NoGuardChaser.store(boolean); break;
+        case 209: g_AutoRevive.store(boolean); break;
+        case 211: g_FOV.store(value); break;
+        case 212: g_UnlimitedCoins.store(boolean); break;
+        case 214: g_NoAds.store(boolean); break;
+
+        // ----- Chams -----
         case 119: g_ChamsEnabled = boolean; break;
         case 120: chamsint = value; break;
         case 125: setColorPreset(value); break;
@@ -505,6 +589,7 @@ void Changes(JNIEnv*, jclass, jobject,
         case 127: g_MaxDistance = (float)value; break;
         case 121: enableRainbow = boolean; break;
         case 122: enableRainbowWall = boolean; break;
+        
         default: break;
     }
 }
