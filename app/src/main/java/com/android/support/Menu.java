@@ -3258,10 +3258,7 @@ private void syncToggles(int[] featNums, boolean on) {
                 break;
         }
     }
-              // ================================================================
-    // Dropdown Fix: Toggle & Arrow Rotation
-    // ================================================================
-        // ================================================================
+         // ================================================================
     // Perfect Inline Dropdown (No PopupWindow, No Bugs)
     // ================================================================
     private void Spinner(LinearLayout linLayout, final int featNum, final String featName, final String list) {
