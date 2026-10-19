@@ -26,7 +26,7 @@ struct Vector3 {
 };
 
 // ================================================================
-//  📁 THREAD-SAFE LOGGER (File + Logcat)
+//  📁 THREAD-SAFE LOGGER (Fixed Path & Instant Write)
 // ================================================================
 static FILE*             g_LogFile  = nullptr;
 static pthread_mutex_t   g_LogMutex = PTHREAD_MUTEX_INITIALIZER;
@@ -37,28 +37,31 @@ static std::atomic<bool> g_LogReady {false};
 
 static void openLogFile() {
     if (g_LogFile) return;
+    // ★ Fixed Path: Android/data doesn't require Scoped Storage permission
     const char* candidates[] = {
+        "/sdcard/Android/data/com.kiloo.subwaysurf/files/ModXLab_Log.txt",
+        "/storage/emulated/0/Android/data/com.kiloo.subwaysurf/files/ModXLab_Log.txt",
         "/sdcard/Documents/ModXLab_Log.txt",
-        "/storage/emulated/0/Documents/ModXLab_Log.txt"
+        "/data/local/tmp/ModXLab_Log.txt"
     };
     for (auto path : candidates) {
-        FILE* f = fopen(path, "a");
+        FILE* f = fopen(path, "w"); // Use "w" to start fresh log
         if (f) {
             g_LogFile = f;
             strncpy(g_LogPath, path, sizeof(g_LogPath) - 1);
             g_LogReady.store(true);
+            fprintf(g_LogFile, "=== ModXLab Log Started ===\n");
+            fflush(g_LogFile);
             return;
         }
     }
 }
 
 static void LOGX(const char* level, const char* fmt, ...) {
-    // Log to Logcat
     va_list ap1; va_start(ap1, fmt);
     __android_log_vprint(ANDROID_LOG_INFO, LOG_TAG, fmt, ap1);
     va_end(ap1);
     
-    // Log to File
     if (!g_LogReady.load() || !g_LogFile) return;
     pthread_mutex_lock(&g_LogMutex);
     time_t now = time(nullptr);
@@ -69,13 +72,12 @@ static void LOGX(const char* level, const char* fmt, ...) {
     vfprintf(g_LogFile, fmt, ap2);
     va_end(ap2);
     fprintf(g_LogFile, "\n"); 
-    // ★ NOTE: Removed fflush() here to prevent game freeze in hot paths. 
-    // Flush happens on critical logs only or on crash.
+    fflush(g_LogFile); // Flush instantly so user can see live log
     pthread_mutex_unlock(&g_LogMutex);
 }
 
 #define LOGI(...) LOGX("I", __VA_ARGS__)
-#define LOGE(...) do { LOGX("E", __VA_ARGS__); if(g_LogFile) { fflush(g_LogFile); } } while(0)
+#define LOGE(...) LOGX("E", __VA_ARGS__)
 
 static inline long long nowMs() {
     return (long long) std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -110,7 +112,6 @@ static std::atomic<long long> g_NoCollisionStartMs {0};
 // ================================================================
 static float (*old_CalculateGravity)(...)           = nullptr;
 static void  (*old_set_Gravity)(...)                = nullptr;
-static void  (*old_UnityTimeManager_Update)(...)    = nullptr;
 static void  (*old_SetT)(...)                       = nullptr;
 static void  (*old_SetGravityMultiplier)(...)       = nullptr;
 static void  (*old_set_SpeedMultiplier)(...)        = nullptr;
@@ -181,7 +182,7 @@ static bool  (*old_get_detectCollisions)(...)   = nullptr;
 // ================================================================
 //                       HOOK IMPLEMENTATIONS
 // ================================================================
-// ★ NO LOGGING in these functions to prevent freeze!
+// ★ NO LOGGING IN THESE FUNCTIONS (Prevents Game Freeze)
 static float new_CalculateGravity(void* self) {
     if (g_NoGravity.load()) return 0.0f;
     return old_CalculateGravity ? old_CalculateGravity(self) : 0.0f;
@@ -190,9 +191,6 @@ static void new_set_Gravity(void* self, float value) {
     if (g_NoGravity.load()) value = 0.0f;
     if (old_set_Gravity) old_set_Gravity(self, value);
 }
-static void new_UnityTimeManager_Update(void* self) {
-    if (old_UnityTimeManager_Update) old_UnityTimeManager_Update(self);
-}
 static void new_SetT(void* self, float t) {
     if (old_SetT) old_SetT(self, t);
 }
@@ -200,9 +198,7 @@ static void new_SetGravityMultiplier(void* self, float value) {
     if (old_SetGravityMultiplier) old_SetGravityMultiplier(self, value);
 }
 static void new_set_SpeedMultiplier(void* self, float value) {
-    if (g_PlayerSpeed.load() != 10) {
-        value = (float)g_PlayerSpeed.load() / 10.0f;
-    }
+    if (g_PlayerSpeed.load() != 10) value = (float)g_PlayerSpeed.load() / 10.0f;
     if (old_set_SpeedMultiplier) old_set_SpeedMultiplier(self, value);
 }
 
@@ -277,12 +273,16 @@ static void new_HandleOnCharacterStumble(void* self, int cause) {
     if (old_HandleOnCharacterStumble) old_HandleOnCharacterStumble(self, cause);
 }
 
-static void new_CharacterStumble_Kill(void* self, void* data) {
+// ★ Fixed: Using unsigned long long for struct parameters to prevent crash/freeze
+static void new_CharacterStumble_Kill(void* self, unsigned long long arg1, unsigned long long arg2) {
     if (g_AutoRevive.load() && old_CharacterStumble_Revive) {
         old_CharacterStumble_Revive(self); 
         return;
     }
-    if (old_CharacterStumble_Kill) old_CharacterStumble_Kill(self, data);
+    if (old_CharacterStumble_Kill) {
+        typedef void (*OrigFunc)(void*, unsigned long long, unsigned long long);
+        ((OrigFunc)old_CharacterStumble_Kill)(self, arg1, arg2);
+    }
 }
 static void new_CharacterStumble_Revive(void* self) {
     if (old_CharacterStumble_Revive) old_CharacterStumble_Revive(self);
@@ -377,15 +377,20 @@ static bool new_TryShowPlacement(void* self, void* placement) {
     return old_TryShowPlacement ? old_TryShowPlacement(self, placement) : false;
 }
 
-static bool new_CheckFrontalImpact(void* self, void* data) {
+// ★ Fixed: Using unsigned long long for struct parameters
+static bool new_CheckFrontalImpact(void* self, unsigned long long arg1, unsigned long long arg2) {
     if (!self) return false;
     if (g_FrontalImpact.load()) return false;
-    return old_CheckFrontalImpact ? old_CheckFrontalImpact(self, data) : false;
+    if (!old_CheckFrontalImpact) return false;
+    typedef bool (*OrigFunc)(void*, unsigned long long, unsigned long long);
+    return ((OrigFunc)old_CheckFrontalImpact)(self, arg1, arg2);
 }
-static bool new_CheckSideImpact(void* self, void* data) {
+static bool new_CheckSideImpact(void* self, unsigned long long arg1, unsigned long long arg2) {
     if (!self) return false;
     if (g_SideImpact.load()) return false;
-    return old_CheckSideImpact ? old_CheckSideImpact(self, data) : false;
+    if (!old_CheckSideImpact) return false;
+    typedef bool (*OrigFunc)(void*, unsigned long long, unsigned long long);
+    return ((OrigFunc)old_CheckSideImpact)(self, arg1, arg2);
 }
 static int new_get_JumpLimit(void* self) {
     if (!self) return 0;
@@ -425,15 +430,11 @@ static bool new_get_detectCollisions(void* self) {
 //                       HACK THREAD
 // ================================================================
 void* hack_thread(void*) {
-    openLogFile();
-    LOGI("════════════════════════════════════════");
-    LOGI("Starting hooks...");
-    LOGI("════════════════════════════════════════");
-    
+    LOGI("Waiting for libil2cpp.so...");
     while (!isLibraryLoaded(LIB)) sleep(1);
     sleep(3);
 
-    LOGI("[1/15] Hooking CharacterMotor...");
+    LOGI("[1/14] Hooking CharacterMotor...");
     {
         auto CM = new LoadClass(OBFUSCATE("SYBO.RunnerCore.Character"), OBFUSCATE("CharacterMotor"));
         if (CM && CM->thisclass) {
@@ -450,7 +451,7 @@ void* hack_thread(void*) {
         } else LOGE("CharacterMotor NOT FOUND");
     }
 
-    LOGI("[2/15] Hooking CharacterMotorAbilities...");
+    LOGI("[2/14] Hooking CharacterMotorAbilities...");
     {
         auto CMA = new LoadClass(OBFUSCATE("SYBO.RunnerCore.Character"), OBFUSCATE("CharacterMotorAbilities"));
         if (CMA && CMA->thisclass) {
@@ -469,7 +470,7 @@ void* hack_thread(void*) {
         } else LOGE("CharacterMotorAbilities NOT FOUND");
     }
 
-    LOGI("[3/15] Hooking MovementAbilityInstance...");
+    LOGI("[3/14] Hooking MovementAbilityInstance...");
     {
         auto MAI = new LoadClass(OBFUSCATE("SYBO.RunnerCore.Character"), OBFUSCATE("MovementAbilityInstance"));
         if (MAI && MAI->thisclass) {
@@ -480,16 +481,7 @@ void* hack_thread(void*) {
         } else LOGE("MovementAbilityInstance NOT FOUND");
     }
 
-    LOGI("[4/15] Hooking UnityTimeManager...");
-    {
-        auto UTM = new LoadClass(OBFUSCATE("SYBO.Subway"), OBFUSCATE("UnityTimeManager"));
-        if (UTM && UTM->thisclass) {
-            DWORD oUpdate = UTM->GetMethodOffsetByName(OBFUSCATE("Update"), 0);
-            if (oUpdate) HOOK_AU((void*)oUpdate, (void*)new_UnityTimeManager_Update, old_UnityTimeManager_Update);
-        } else LOGE("UnityTimeManager NOT FOUND");
-    }
-
-    LOGI("[5/15] Hooking Power...");
+    LOGI("[4/14] Hooking Power...");
     {
         auto P = new LoadClass(OBFUSCATE("SYBO.RunnerCore.Powers"), OBFUSCATE("Power"));
         if (P && P->thisclass) {
@@ -504,7 +496,7 @@ void* hack_thread(void*) {
         } else LOGE("Power NOT FOUND");
     }
 
-    LOGI("[6/15] Hooking CharacterPower...");
+    LOGI("[5/14] Hooking CharacterPower...");
     {
         auto CP = new LoadClass(OBFUSCATE("SYBO.RunnerCore.Powers"), OBFUSCATE("CharacterPower"));
         if (CP && CP->thisclass) {
@@ -523,7 +515,7 @@ void* hack_thread(void*) {
         } else LOGE("CharacterPower NOT FOUND");
     }
 
-    LOGI("[7/15] Hooking MovingTrain...");
+    LOGI("[6/14] Hooking MovingTrain...");
     {
         auto MT = new LoadClass(OBFUSCATE("SYBO.Subway"), OBFUSCATE("MovingTrain"));
         if (MT && MT->thisclass) {
@@ -534,7 +526,7 @@ void* hack_thread(void*) {
         } else LOGE("MovingTrain NOT FOUND");
     }
 
-    LOGI("[8/15] Hooking Chaser...");
+    LOGI("[7/14] Hooking Chaser...");
     {
         auto CG = new LoadClass(OBFUSCATE("SYBO.Subway"), OBFUSCATE("ChaserGraphics"));
         if (CG && CG->thisclass) {
@@ -551,7 +543,7 @@ void* hack_thread(void*) {
         } else LOGE("ChaserBehaviour NOT FOUND");
     }
 
-    LOGI("[9/15] Hooking Revive System...");
+    LOGI("[8/14] Hooking Revive System...");
     {
         auto CS = new LoadClass(OBFUSCATE("SYBO.Subway"), OBFUSCATE("CharacterStumble"));
         if (CS && CS->thisclass) {
@@ -584,7 +576,7 @@ void* hack_thread(void*) {
         } else LOGE("ActiveReviveBonus NOT FOUND");
     }
 
-    LOGI("[10/15] Hooking Camera...");
+    LOGI("[9/14] Hooking Camera...");
     {
         auto CCtrl = new LoadClass(OBFUSCATE("SYBO.Subway"), OBFUSCATE("CameraController"));
         if (CCtrl && CCtrl->thisclass) {
@@ -605,7 +597,7 @@ void* hack_thread(void*) {
         } else LOGE("CameraContext NOT FOUND");
     }
 
-    LOGI("[11/15] Hooking Fog...");
+    LOGI("[10/14] Hooking Fog...");
     {
         auto TC = new LoadClass(OBFUSCATE("SYBO.Subway"), OBFUSCATE("ThemeConfig"));
         if (TC && TC->thisclass) {
@@ -614,7 +606,7 @@ void* hack_thread(void*) {
         } else LOGE("ThemeConfig NOT FOUND");
     }
 
-    LOGI("[12/15] Hooking Currency & Data...");
+    LOGI("[11/14] Hooking Currency...");
     {
         auto RSD = new LoadClass(OBFUSCATE("SYBO.Subway"), OBFUSCATE("RunSessionData"));
         if (RSD && RSD->thisclass) {
@@ -650,7 +642,7 @@ void* hack_thread(void*) {
         } else LOGE("WalletModel NOT FOUND");
     }
 
-    LOGI("[13/15] Hooking Ads...");
+    LOGI("[12/14] Hooking Ads...");
     {
         auto IH = new LoadClass(OBFUSCATE("SYBO.Ads"), OBFUSCATE("InterstitialsHelper"));
         if (IH && IH->thisclass) {
@@ -661,7 +653,7 @@ void* hack_thread(void*) {
         } else LOGE("InterstitialsHelper NOT FOUND");
     }
 
-    LOGI("[14/15] Hooking Gameplay Core...");
+    LOGI("[13/14] Hooking Gameplay Core...");
     {
         auto SB = new LoadClass(OBFUSCATE("SYBO.Subway"), OBFUSCATE("StumbleBehaviour"));
         if (SB && SB->thisclass) {
@@ -682,14 +674,10 @@ void* hack_thread(void*) {
         } else LOGE("CharacterController NOT FOUND");
     }
 
-    LOGI("[15/15] Hooking Chams...");
+    LOGI("[14/14] Hooking Chams...");
     RenderHook();
     
-    LOGI("════════════════════════════════════════");
     LOGI("ALL HOOKS INSTALLED SUCCESSFULLY");
-    LOGI("════════════════════════════════════════");
-    if(g_LogFile) { fflush(g_LogFile); } // Flush at end of init
-    
     return nullptr;
 }
 
@@ -877,6 +865,9 @@ extern "C" JNIEXPORT void JNICALL Java_com_android_support_Main_setNativeCrashDi
 // ================================================================
 __attribute__((constructor))
 void lib_main() {
+    openLogFile(); // ★ Create log file immediately on library load
+    LOGI("ModXLab Library Constructed.");
+    
     pthread_t ptid;
     pthread_create(&ptid, NULL, hack_thread, NULL);
 }
