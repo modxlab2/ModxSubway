@@ -43,13 +43,13 @@ struct Vec4 {
 static void *handle = nullptr;
 std::vector<std::string> shaders;
 
-int chamsint = 3; // Default: Hybrid Professional
+int chamsint = 3; // Default: Hybrid Opaque
 bool g_ChamsEnabled = false;
 std::string mineShader = "_Displacement"; 
-float g_MaxDistance = 40.0f; // Default distance
+float g_MaxDistance = 40.0f; 
 
 // ================================================================
-//  Color Presets (Original Dark Green / Sky Blue)
+//  Color Presets
 // ================================================================
 struct ColorPreset { const char* name; Vec4 visible; Vec4 inWall; };
 static const ColorPreset kColorPresets[] = {
@@ -112,7 +112,7 @@ int new_glGetUniformLocation(unsigned int program, const char *name) {
 }
 
 // ================================================================
-//  glDrawElements hook — Final Perfect Fix
+//  glDrawElements hook
 // ================================================================
 void (*old_glDrawElements)(unsigned int, int, unsigned int, const void *) = nullptr;
 void new_glDrawElements(unsigned int mode, int count, unsigned int type, const void *indices) {
@@ -138,47 +138,37 @@ void new_glDrawElements(unsigned int mode, int count, unsigned int type, const v
         return old_glDrawElements(mode, count, type, indices);
     }
 
-    // ★ Distance Filter & Debug Logger
-    int objLoc = old_glGetUniformLocation(currProgram, "hlslcc_mtx4x4unity_ObjectToWorld[0]");
-    int camLoc = old_glGetUniformLocation(currProgram, "_WorldSpaceCameraPos");
-    if (camLoc == -1) camLoc = old_glGetUniformLocation(currProgram, "hlslcc_mtx4x4unity_MatrixInvV[0]");
-
-    if (objLoc != -1 && camLoc != -1) {
-        float objMat[16];
-        float camData[16];
-        p_glGetUniformfv(currProgram, objLoc, objMat);
-        p_glGetUniformfv(currProgram, camLoc, camData);
+    // ★ Distance Filter (Fixed using matrix translation)
+    if (g_MaxDistance > 0.0f) {
+        // hlslcc_mtx4x4unity_ObjectToWorld[3] is the translation column
+        int objLoc = old_glGetUniformLocation(currProgram, "hlslcc_mtx4x4unity_ObjectToWorld[3]");
+        int camLoc = old_glGetUniformLocation(currProgram, "_WorldSpaceCameraPos");
         
-        float worldX = objMat[12];
-        float worldZ = objMat[14];
-        
-        float camX = camData[0];
-        float camZ = camData[2];
-        
-        // If using InvV matrix, translation is at 12,13,14
-        if (camLoc != old_glGetUniformLocation(currProgram, "_WorldSpaceCameraPos")) {
-            camX = camData[12];
-            camZ = camData[14];
-        }
+        if (objLoc != -1 && camLoc != -1) {
+            float objVec[4]; // Translation is vec4 (x, y, z, 1)
+            float cam[3];
+            p_glGetUniformfv(currProgram, objLoc, objVec);
+            p_glGetUniformfv(currProgram, camLoc, cam);
+            
+            float dx = objVec[0] - cam[0];
+            float dz = objVec[2] - cam[2];
+            float dist = sqrt(dx*dx + dz*dz);
 
-        float dx = worldX - camX;
-        float dz = worldZ - camZ;
-        float dist = sqrt(dx*dx + dz*dz);
-
-        // Log to file (once per second)
-        static std::chrono::steady_clock::time_point lastLogTime;
-        auto now = std::chrono::steady_clock::now();
-        if (std::chrono::duration_cast<std::chrono::milliseconds>(now - lastLogTime).count() > 1000) {
-            lastLogTime = now;
-            std::ofstream logFile("/sdcard/Documents/Chams_Debug.txt", std::ios::app);
-            if (logFile.is_open()) {
-                logFile << "Dist: " << dist << " | CamZ: " << camZ << " | ObjZ: " << worldZ << " | Max: " << g_MaxDistance << "\n";
-                logFile.close();
+            // Log for debugging
+            static std::chrono::steady_clock::time_point lastLogTime;
+            auto now = std::chrono::steady_clock::now();
+            if (std::chrono::duration_cast<std::chrono::milliseconds>(now - lastLogTime).count() > 1000) {
+                lastLogTime = now;
+                std::ofstream logFile("/sdcard/Documents/Chams_Debug.txt", std::ios::app);
+                if (logFile.is_open()) {
+                    logFile << "Dist: " << dist << " | ObjZ: " << objVec[2] << " | CamZ: " << cam[2] << " | Max: " << g_MaxDistance << "\n";
+                    logFile.close();
+                }
             }
-        }
 
-        if (dist > g_MaxDistance) {
-            return old_glDrawElements(mode, count, type, indices);
+            if (dist > g_MaxDistance) {
+                return old_glDrawElements(mode, count, type, indices);
+            }
         }
     }
 
@@ -214,21 +204,20 @@ void new_glDrawElements(unsigned int mode, int count, unsigned int type, const v
         p_glEnable(GL_CULL_FACE);
         p_glDepthMask(GL_TRUE);
     }
-    // Mode 3: Hybrid Opaque (No X-Ray)
+    // Mode 3: Hybrid Opaque
     else if (chamsint == 3) {
-        // 1. Draw inner walls (Sky Blue)
         p_glEnable(GL_DEPTH_TEST);
         p_glDepthFunc(GL_LESS); 
-        p_glCullFace(GL_FRONT); // Draw back faces only
+        
+        // 1. Draw inner walls (Sky Blue) by culling FRONT faces
+        p_glCullFace(GL_FRONT); 
         p_glBlendColor(inWallColor.x, inWallColor.y, inWallColor.z, 1.0f);
         old_glDrawElements(mode, count, type, indices);
 
-        // 2. Draw outer walls (Dark Green)
-        p_glCullFace(GL_BACK); // Draw front faces only
+        // 2. Draw outer walls (Dark Green) by culling BACK faces
+        p_glCullFace(GL_BACK); 
         p_glBlendColor(visibleColor.x, visibleColor.y, visibleColor.z, 1.0f);
         old_glDrawElements(mode, count, type, indices);
-        
-        p_glCullFace(GL_BACK); // Restore
     }
 
     p_glDisable(GL_BLEND);
