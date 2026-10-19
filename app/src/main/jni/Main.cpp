@@ -278,8 +278,8 @@ jobjectArray GetFeatureList(JNIEnv* env, jobject) {
         OBFUSCATE("125_Spinner_Color Preset_Dark Green / Sky Blue,Neon Green / Red,Cyan / Magenta"),
         OBFUSCATE("126_Spinner_Shader Target_Trains Only (_Displacement),All Objects (_MainTex)"),
         
-        // ★ Distance Slider (10 to 200, Default 60)
-        OBFUSCATE("127_SeekBar_Max Distance_10_200"),
+        // ★ Distance Slider (15 to 100)
+        OBFUSCATE("127_SeekBar_Max Distance_15_100"),
 
         OBFUSCATE("121_Toggle_Rainbow Visible"),
         OBFUSCATE("122_Toggle_Rainbow In-Wall"),

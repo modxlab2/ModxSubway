@@ -45,21 +45,21 @@ std::vector<std::string> shaders;
 int chamsint = 3; // Default: Hybrid Professional
 bool g_ChamsEnabled = false;
 std::string mineShader = "_Displacement"; 
-float g_MaxDistance = 60.0f; // Default distance
+float g_MaxDistance = 35.0f; // ★ Tight distance to block far trains
 
 // ================================================================
-//  Color Presets
+//  Color Presets (Perfect Solid Colors)
 // ================================================================
 struct ColorPreset { const char* name; Vec4 visible; Vec4 inWall; };
 static const ColorPreset kColorPresets[] = {
-    { "Dark Green / Sky Blue", {0.0f, 0.5f, 0.0f, 1.0f}, {0.3f, 0.8f, 1.0f, 1.0f} },
+    { "Dark Green / Sky Blue", {0.0f, 0.6f, 0.0f, 1.0f}, {0.3f, 0.8f, 1.0f, 1.0f} },
     { "Neon Green / Red",      {0.0f, 1.0f, 0.0f, 1.0f}, {1.0f, 0.0f, 0.0f, 1.0f} },
     { "Cyan / Magenta",        {0.0f, 1.0f, 1.0f, 1.0f}, {1.0f, 0.0f, 1.0f, 1.0f} },
 };
 static const int kColorPresetCount = sizeof(kColorPresets) / sizeof(kColorPresets[0]);
 
 bool enableRainbow = false, enableRainbowWall = false;
-Vec4 visibleColor = Vec4(0.0f, 0.5f, 0.0f, 1.0f);
+Vec4 visibleColor = Vec4(0.0f, 0.6f, 0.0f, 1.0f);
 Vec4 inWallColor  = Vec4(0.3f, 0.8f, 1.0f, 1.0f);
 
 // ================================================================
@@ -137,7 +137,7 @@ void new_glDrawElements(unsigned int mode, int count, unsigned int type, const v
         return old_glDrawElements(mode, count, type, indices);
     }
 
-    // ★ Distance Logic (Z-Axis Focused)
+    // ★ Deep Distance & Lane Filter
     if (g_MaxDistance > 0.0f) {
         int objLoc = old_glGetUniformLocation(currProgram, "hlslcc_mtx4x4unity_ObjectToWorld[0]");
         int camLoc = old_glGetUniformLocation(currProgram, "_WorldSpaceCameraPos");
@@ -147,11 +147,13 @@ void new_glDrawElements(unsigned int mode, int count, unsigned int type, const v
             p_glGetUniformfv(currProgram, objLoc, mat);
             p_glGetUniformfv(currProgram, camLoc, cam);
             
-            // Z-Distance calculation to avoid side objects
-            float dz = fabs(mat[14] - cam[2]); 
-            if (dz > g_MaxDistance) {
-                return old_glDrawElements(mode, count, type, indices);
-            }
+            float dx = mat[12] - cam[0];
+            float dz = mat[14] - cam[2];
+            
+            // Filter side lanes (X-axis > 4.0 means side train)
+            if (fabs(dx) > 4.0f) return old_glDrawElements(mode, count, type, indices);
+            // Filter far trains (Z-axis > MaxDistance)
+            if (fabs(dz) > g_MaxDistance) return old_glDrawElements(mode, count, type, indices);
         }
     }
 
@@ -167,7 +169,8 @@ void new_glDrawElements(unsigned int mode, int count, unsigned int type, const v
     old_glDrawElements(mode, count, type, indices);
 
     p_glEnable(GL_BLEND);
-    p_glBlendFunc(GL_ZERO, GL_CONSTANT_COLOR); 
+    // ★ GL_ZERO removes original texture color, GL_CONSTANT_COLOR applies our color.
+    p_glBlendFunc(GL_CONSTANT_COLOR, GL_ZERO); 
 
     // Mode 1: Solid Visible
     if (chamsint == 1) {
@@ -191,7 +194,7 @@ void new_glDrawElements(unsigned int mode, int count, unsigned int type, const v
     else if (chamsint == 3) {
         // 1. Inner walls (Sky Blue) - ONLY BEHIND CHARACTER
         p_glEnable(GL_DEPTH_TEST);
-        p_glDepthFunc(GL_GREATER); // Character preserved
+        p_glDepthFunc(GL_GREATER); 
         p_glDisable(GL_CULL_FACE); 
         p_glBlendColor(inWallColor.x, inWallColor.y, inWallColor.z, 1.0f);
         old_glDrawElements(mode, count, type, indices);
