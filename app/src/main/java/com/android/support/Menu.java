@@ -3258,7 +3258,10 @@ private void syncToggles(int[] featNums, boolean on) {
                 break;
         }
     }
-          private void Spinner(LinearLayout linLayout, final int featNum, final String featName, final String list) {
+              // ================================================================
+    // Dropdown Fix: Toggle & Arrow Rotation
+    // ================================================================
+    private void Spinner(LinearLayout linLayout, final int featNum, final String featName, final String list) {
         final Context ctx = getContext;
         final List<String> lists = new LinkedList<String>(Arrays.asList(list.split(",")));
 
@@ -3289,15 +3292,15 @@ private void syncToggles(int[] featNums, boolean on) {
         
         tvName.setText(featName + ": " + lists.get(initIdx));
 
-        spinnerRow.setOnClickListener(new View.OnClickListener() {
-            private PopupWindow activePopup = null;
+        // ★ GLOBAL Popup variable for this spinner
+        final PopupWindow[] activePopup = new PopupWindow[1];
 
+        spinnerRow.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                // ★ Toggle Close: If open, close it
-                if (activePopup != null && activePopup.isShowing()) {
-                    activePopup.dismiss();
-                    arrowIv.animate().rotation(0f).setDuration(200).start();
+                // Toggle Close Fix
+                if (activePopup[0] != null && activePopup[0].isShowing()) {
+                    activePopup[0].dismiss();
                     return;
                 }
 
@@ -3313,10 +3316,11 @@ private void syncToggles(int[] featNums, boolean on) {
                 final PopupWindow popupWindow = new PopupWindow(popupLayout, 
                         spinnerRow.getWidth(), WRAP_CONTENT, true);
                 popupWindow.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
-                popupWindow.setOutsideTouchable(false); // ★ FIX: Prevent instant close
+                popupWindow.setOutsideTouchable(true);
                 popupWindow.setFocusable(false); 
-                activePopup = popupWindow;
+                activePopup[0] = popupWindow;
 
+                // Rotate arrow only
                 arrowIv.animate().rotation(180f).setDuration(200).start();
 
                 popupWindow.setOnDismissListener(new PopupWindow.OnDismissListener() {
