@@ -45,14 +45,14 @@ std::vector<std::string> shaders;
 int chamsint = 3; // Hybrid
 bool g_ChamsEnabled = false;
 std::string mineShader = "_Displacement"; 
-float g_MaxDistance = 25.0f; // ★ Default distance to 25
+float g_MaxDistance = 25.0f; // ★ Default distance
 
 // ================================================================
-//  Color Presets (Cyan / Blue)
+//  Color Presets (Neon Cyan / Sky Blue)
 // ================================================================
 struct ColorPreset { const char* name; Vec4 visible; Vec4 inWall; };
 static const ColorPreset kColorPresets[] = {
-    { "Neon Cyan / Blue",      {0.00f, 1.00f, 1.00f, 1.0f}, {0.20f, 0.60f, 1.00f, 1.0f} },
+    { "Neon Cyan / Sky Blue",  {0.00f, 1.00f, 1.00f, 1.0f}, {0.20f, 0.60f, 1.00f, 1.0f} },
     { "Neon Green / Red",      {0.00f, 1.00f, 0.00f, 1.0f}, {1.00f, 0.00f, 0.00f, 1.0f} },
     { "Yellow / Blue",         {1.00f, 0.90f, 0.10f, 1.0f}, {0.15f, 0.40f, 1.00f, 1.0f} },
     { "White / Red",           {1.00f, 1.00f, 1.00f, 1.0f}, {1.00f, 0.00f, 0.00f, 1.0f} },
@@ -96,9 +96,8 @@ void (*p_glLineWidth)(float)                            = nullptr;
 void (*p_glBlendFunc)(unsigned int, unsigned int)       = nullptr;
 void (*p_glDisable)(unsigned int)                       = nullptr;
 void (*p_glCullFace)(unsigned int)                      = nullptr;
-void (*p_glDepthFunc)(unsigned int)                     = nullptr; 
 void (*p_glDepthMask)(unsigned char)                    = nullptr;
-void (*p_glGetUniformfv)(unsigned int, int, float*)     = nullptr;
+void (*p_glGetFloatv)(unsigned int, float *)            = nullptr; // ★ New pointer
 
 const char *isDumpLocation = "/sdcard/Documents/Shaders.txt";
 void dumpShadersToFile() {
@@ -126,7 +125,7 @@ int new_glGetUniformLocation(unsigned int program, const char *name) {
 void (*old_glDrawElements)(unsigned int, int, unsigned int, const void *) = nullptr;
 void new_glDrawElements(unsigned int mode, int count, unsigned int type, const void *indices) {
 
-    // Filter: Ignore small meshes (character, coins, UI)
+    // Ignore character (small count)
     int minCount = (mineShader == "_Displacement") ? 1500 : 3000;
     
     if (mode != GL_TRIANGLES || count < minCount) {
@@ -149,22 +148,17 @@ void new_glDrawElements(unsigned int mode, int count, unsigned int type, const v
         return old_glDrawElements(mode, count, type, indices);
     }
 
-    // ★ Distance Check (Only show near trains)
+    // ★ Perfect Distance Check
     if (g_MaxDistance > 0.0f) {
-        int objLoc = old_glGetUniformLocation(currProgram, "hlslcc_mtx4x4unity_ObjectToWorld[0]");
-        int camLoc = old_glGetUniformLocation(currProgram, "_WorldSpaceCameraPos");
-        if (objLoc != -1 && camLoc != -1) {
-            float mat[16];
-            float cam[3];
-            p_glGetUniformfv(currProgram, objLoc, mat);
-            p_glGetUniformfv(currProgram, camLoc, cam);
-            float dx = mat[12] - cam[0];
-            float dy = mat[13] - cam[1];
-            float dz = mat[14] - cam[2];
-            float dist = sqrt(dx*dx + dy*dy + dz*dz);
-            if (dist > g_MaxDistance) {
-                return old_glDrawElements(mode, count, type, indices);
-            }
+        float mvMat[16];
+        p_glGetFloatv(GL_MODELVIEW_MATRIX, mvMat); // Gets object position relative to camera
+        float x = mvMat[12];
+        float y = mvMat[13];
+        float z = mvMat[14];
+        float dist = sqrt(x*x + y*y + z*z);
+        
+        if (dist > g_MaxDistance) {
+            return old_glDrawElements(mode, count, type, indices);
         }
     }
 
@@ -180,7 +174,7 @@ void new_glDrawElements(unsigned int mode, int count, unsigned int type, const v
     old_glDrawElements(mode, count, type, indices);
 
     p_glEnable(GL_BLEND);
-    p_glBlendFunc(GL_ONE, GL_CONSTANT_COLOR); // ★ Solid Color Blend
+    p_glBlendFunc(GL_ONE, GL_CONSTANT_COLOR); // Solid Color Blend
 
     // Mode 1: Solid Visible
     if (chamsint == 1) {
@@ -202,15 +196,15 @@ void new_glDrawElements(unsigned int mode, int count, unsigned int type, const v
     }
     // Mode 3: Hybrid Professional
     else if (chamsint == 3) {
-        // Inner walls
+        // Inner walls (Sky Blue)
         p_glDisable(GL_DEPTH_TEST);
         p_glDisable(GL_CULL_FACE); 
         p_glBlendColor(inWallColor.x, inWallColor.y, inWallColor.z, 1.0f);
         old_glDrawElements(mode, count, type, indices);
 
-        // Outer walls
+        // Outer walls (Cyan)
         p_glEnable(GL_DEPTH_TEST);
-        p_glDepthMask(GL_FALSE); // Character fix
+        p_glDepthMask(GL_FALSE); // Character visibility fix
         p_glBlendColor(visibleColor.x, visibleColor.y, visibleColor.z, 1.0f);
         old_glDrawElements(mode, count, type, indices);
         
@@ -237,10 +231,8 @@ void RenderHook() {
     p_glBlendFunc    = (void (*)(unsigned int, unsigned int))     dlsym(handle, "glBlendFunc");
     p_glDisable      = (void (*)(unsigned int))                   dlsym(handle, "glDisable");
     p_glCullFace     = (void (*)(unsigned int))                   dlsym(handle, "glCullFace");
-    
-    p_glDepthFunc    = (void (*)(unsigned int))                   dlsym(handle, "glDepthFunc");
     p_glDepthMask    = (void (*)(unsigned char))                  dlsym(handle, "glDepthMask");
-    p_glGetUniformfv = (void (*)(unsigned int, int, float*))      dlsym(handle, "glGetUniformfv");
+    p_glGetFloatv    = (void (*)(unsigned int, float *))          dlsym(handle, "glGetFloatv"); // ★ Loaded
 
     void *pGet = dlsym(handle, "glGetUniformLocation");
     if (pGet) HOOK_FN(pGet, (void*)new_glGetUniformLocation, (void**)&old_glGetUniformLocation);

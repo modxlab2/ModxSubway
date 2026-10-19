@@ -274,16 +274,9 @@ jobjectArray GetFeatureList(JNIEnv* env, jobject) {
         OBFUSCATE("Category_Chams"),
         
         OBFUSCATE("119_Toggle_Enable Chams"),
-        
-        // Default mode Hybrid, Distance 25
         OBFUSCATE("120_Spinner_Chams Mode_Off,Solid Visible,X-Ray,Hybrid Professional"),
-        
-        // Default Color Cyan/Blue
-        OBFUSCATE("125_Spinner_Color Preset_Neon Cyan / Blue,Neon Green / Red,Yellow / Blue,White / Red"),
-        
+        OBFUSCATE("125_Spinner_Color Preset_Neon Cyan / Sky Blue,Neon Green / Red,Yellow / Blue,White / Red"),
         OBFUSCATE("126_Spinner_Shader Target_Trains Only (_Displacement),All Objects (_MainTex)"),
-        
-        // ★ Distance slider default 25
         OBFUSCATE("127_SeekBar_Max Distance_10_100"),
 
         OBFUSCATE("121_Toggle_Rainbow Visible"),
@@ -331,7 +324,7 @@ void Changes(JNIEnv*, jclass, jobject,
         case 120: chamsint = value;                   break;
         case 125: setColorPreset(value);              break;
         case 126: setShaderPreset(value);             break;
-        case 127: g_MaxDistance = (float)value;       break; // Distance
+        case 127: g_MaxDistance = (float)value;       break; 
         case 121: enableRainbow = boolean;            break;
         case 122: enableRainbowWall = boolean;        break;
 
