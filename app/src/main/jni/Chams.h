@@ -12,6 +12,7 @@
 #include <ctime>
 #include <android/log.h>
 #include <GLES2/gl2.h>
+#include <GLES/gl.h> // ★ GL_MODELVIEW_MATRIX এর জন্য প্রয়োজন
 #include <math.h>
 #include "RGB.h"
 
@@ -42,10 +43,10 @@ struct Vec4 {
 static void *handle = nullptr;
 std::vector<std::string> shaders;
 
-int chamsint = 3; // Hybrid
+int chamsint = 3; // Hybrid Professional
 bool g_ChamsEnabled = false;
 std::string mineShader = "_Displacement"; 
-float g_MaxDistance = 25.0f; // ★ Default distance
+float g_MaxDistance = 80.0f; // ★ ডিফল্ট দূরত্ব বাড়িয়ে ৮০ করা হলো
 
 // ================================================================
 //  Color Presets (Neon Cyan / Sky Blue)
@@ -97,7 +98,7 @@ void (*p_glBlendFunc)(unsigned int, unsigned int)       = nullptr;
 void (*p_glDisable)(unsigned int)                       = nullptr;
 void (*p_glCullFace)(unsigned int)                      = nullptr;
 void (*p_glDepthMask)(unsigned char)                    = nullptr;
-void (*p_glGetFloatv)(unsigned int, float *)            = nullptr; // ★ New pointer
+void (*p_glGetFloatv)(unsigned int, float *)            = nullptr; 
 
 const char *isDumpLocation = "/sdcard/Documents/Shaders.txt";
 void dumpShadersToFile() {
@@ -125,7 +126,7 @@ int new_glGetUniformLocation(unsigned int program, const char *name) {
 void (*old_glDrawElements)(unsigned int, int, unsigned int, const void *) = nullptr;
 void new_glDrawElements(unsigned int mode, int count, unsigned int type, const void *indices) {
 
-    // Ignore character (small count)
+    // Ignore character and small objects
     int minCount = (mineShader == "_Displacement") ? 1500 : 3000;
     
     if (mode != GL_TRIANGLES || count < minCount) {
@@ -148,10 +149,10 @@ void new_glDrawElements(unsigned int mode, int count, unsigned int type, const v
         return old_glDrawElements(mode, count, type, indices);
     }
 
-    // ★ Perfect Distance Check
+    // ★ নিখুঁত দূরত্ব নির্ণয় (Perfect Distance Check)
     if (g_MaxDistance > 0.0f) {
         float mvMat[16];
-        p_glGetFloatv(GL_MODELVIEW_MATRIX, mvMat); // Gets object position relative to camera
+        p_glGetFloatv(GL_MODELVIEW_MATRIX, mvMat); // GLES/gl.h এর জন্য সঠিক
         float x = mvMat[12];
         float y = mvMat[13];
         float z = mvMat[14];
@@ -170,11 +171,11 @@ void new_glDrawElements(unsigned int mode, int count, unsigned int type, const v
     }
     performRGBChange();
 
-    // Draw original
+    // মূল গেম অবজেক্ট ড্র করা
     old_glDrawElements(mode, count, type, indices);
 
     p_glEnable(GL_BLEND);
-    p_glBlendFunc(GL_ONE, GL_CONSTANT_COLOR); // Solid Color Blend
+    p_glBlendFunc(GL_ONE, GL_CONSTANT_COLOR); // সলিড কালার ব্লেন্ড
 
     // Mode 1: Solid Visible
     if (chamsint == 1) {
@@ -196,15 +197,15 @@ void new_glDrawElements(unsigned int mode, int count, unsigned int type, const v
     }
     // Mode 3: Hybrid Professional
     else if (chamsint == 3) {
-        // Inner walls (Sky Blue)
+        // ভেতরের দেওয়াল (Sky Blue)
         p_glDisable(GL_DEPTH_TEST);
         p_glDisable(GL_CULL_FACE); 
         p_glBlendColor(inWallColor.x, inWallColor.y, inWallColor.z, 1.0f);
         old_glDrawElements(mode, count, type, indices);
 
-        // Outer walls (Cyan)
+        // বাইরের দেওয়াল (Cyan)
         p_glEnable(GL_DEPTH_TEST);
-        p_glDepthMask(GL_FALSE); // Character visibility fix
+        p_glDepthMask(GL_FALSE); // ক্যারেক্টার দৃশ্যমানতার জন্য
         p_glBlendColor(visibleColor.x, visibleColor.y, visibleColor.z, 1.0f);
         old_glDrawElements(mode, count, type, indices);
         
@@ -232,7 +233,7 @@ void RenderHook() {
     p_glDisable      = (void (*)(unsigned int))                   dlsym(handle, "glDisable");
     p_glCullFace     = (void (*)(unsigned int))                   dlsym(handle, "glCullFace");
     p_glDepthMask    = (void (*)(unsigned char))                  dlsym(handle, "glDepthMask");
-    p_glGetFloatv    = (void (*)(unsigned int, float *))          dlsym(handle, "glGetFloatv"); // ★ Loaded
+    p_glGetFloatv    = (void (*)(unsigned int, float *))          dlsym(handle, "glGetFloatv");
 
     void *pGet = dlsym(handle, "glGetUniformLocation");
     if (pGet) HOOK_FN(pGet, (void*)new_glGetUniformLocation, (void**)&old_glGetUniformLocation);
