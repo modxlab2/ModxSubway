@@ -12,7 +12,6 @@
 #include <ctime>
 #include <android/log.h>
 #include <GLES2/gl2.h>
-#include <GLES/gl.h> // ★ GL_MODELVIEW_MATRIX এর জন্য প্রয়োজন
 #include <math.h>
 #include "RGB.h"
 
@@ -43,26 +42,26 @@ struct Vec4 {
 static void *handle = nullptr;
 std::vector<std::string> shaders;
 
-int chamsint = 3; // Hybrid Professional
+int chamsint = 3; // Hybrid
 bool g_ChamsEnabled = false;
 std::string mineShader = "_Displacement"; 
-float g_MaxDistance = 80.0f; // ★ ডিফল্ট দূরত্ব বাড়িয়ে ৮০ করা হলো
+float g_MaxDistance = 60.0f; // ★ ডিফল্ট দূরত্ব ২টি ট্রেনের জন্য ৬০
 
 // ================================================================
-//  Color Presets (Neon Cyan / Sky Blue)
+//  Color Presets (Dark Green / Light Sky Blue)
 // ================================================================
 struct ColorPreset { const char* name; Vec4 visible; Vec4 inWall; };
 static const ColorPreset kColorPresets[] = {
-    { "Neon Cyan / Sky Blue",  {0.00f, 1.00f, 1.00f, 1.0f}, {0.20f, 0.60f, 1.00f, 1.0f} },
+    { "Dark Green / Sky Blue", {0.00f, 0.40f, 0.00f, 1.0f}, {0.40f, 0.80f, 1.00f, 1.0f} }, // ★ গাঢ় সবুজ এবং হালকা আকাশী
+    { "Neon Cyan / Blue",      {0.00f, 1.00f, 1.00f, 1.0f}, {0.20f, 0.60f, 1.00f, 1.0f} },
     { "Neon Green / Red",      {0.00f, 1.00f, 0.00f, 1.0f}, {1.00f, 0.00f, 0.00f, 1.0f} },
     { "Yellow / Blue",         {1.00f, 0.90f, 0.10f, 1.0f}, {0.15f, 0.40f, 1.00f, 1.0f} },
-    { "White / Red",           {1.00f, 1.00f, 1.00f, 1.0f}, {1.00f, 0.00f, 0.00f, 1.0f} },
 };
 static const int kColorPresetCount = sizeof(kColorPresets) / sizeof(kColorPresets[0]);
 
 bool enableRainbow = false, enableRainbowWall = false;
-Vec4 visibleColor = Vec4(0.00f, 1.00f, 1.00f, 1.0f); // Cyan
-Vec4 inWallColor  = Vec4(0.20f, 0.60f, 1.00f, 1.0f); // Sky Blue
+Vec4 visibleColor = Vec4(0.00f, 0.40f, 0.00f, 1.0f);
+Vec4 inWallColor  = Vec4(0.40f, 0.80f, 1.00f, 1.0f);
 
 // ================================================================
 //  Shader Presets
@@ -98,7 +97,8 @@ void (*p_glBlendFunc)(unsigned int, unsigned int)       = nullptr;
 void (*p_glDisable)(unsigned int)                       = nullptr;
 void (*p_glCullFace)(unsigned int)                      = nullptr;
 void (*p_glDepthMask)(unsigned char)                    = nullptr;
-void (*p_glGetFloatv)(unsigned int, float *)            = nullptr; 
+void (*p_glDepthFunc)(unsigned int)                     = nullptr;
+void (*p_glGetUniformfv)(unsigned int, int, float*)     = nullptr; 
 
 const char *isDumpLocation = "/sdcard/Documents/Shaders.txt";
 void dumpShadersToFile() {
@@ -149,17 +149,25 @@ void new_glDrawElements(unsigned int mode, int count, unsigned int type, const v
         return old_glDrawElements(mode, count, type, indices);
     }
 
-    // ★ নিখুঁত দূরত্ব নির্ণয় (Perfect Distance Check)
+    // ★ নিখুঁত দূরত্ব নির্ণয় (Unity Uniforms ব্যবহার করে)
     if (g_MaxDistance > 0.0f) {
-        float mvMat[16];
-        p_glGetFloatv(GL_MODELVIEW_MATRIX, mvMat); // GLES/gl.h এর জন্য সঠিক
-        float x = mvMat[12];
-        float y = mvMat[13];
-        float z = mvMat[14];
-        float dist = sqrt(x*x + y*y + z*z);
+        int objLoc = old_glGetUniformLocation(currProgram, "hlslcc_mtx4x4unity_ObjectToWorld[0]");
+        int camLoc = old_glGetUniformLocation(currProgram, "_WorldSpaceCameraPos");
         
-        if (dist > g_MaxDistance) {
-            return old_glDrawElements(mode, count, type, indices);
+        if (objLoc != -1 && camLoc != -1) {
+            float mat[16];
+            float cam[3];
+            p_glGetUniformfv(currProgram, objLoc, mat);
+            p_glGetUniformfv(currProgram, camLoc, cam);
+            
+            float dx = mat[12] - cam[0];
+            float dy = mat[13] - cam[1];
+            float dz = mat[14] - cam[2];
+            float dist = sqrt(dx*dx + dy*dy + dz*dz);
+            
+            if (dist > g_MaxDistance) {
+                return old_glDrawElements(mode, count, type, indices);
+            }
         }
     }
 
@@ -175,7 +183,7 @@ void new_glDrawElements(unsigned int mode, int count, unsigned int type, const v
     old_glDrawElements(mode, count, type, indices);
 
     p_glEnable(GL_BLEND);
-    p_glBlendFunc(GL_ONE, GL_CONSTANT_COLOR); // সলিড কালার ব্লেন্ড
+    p_glBlendFunc(GL_ONE, GL_CONSTANT_COLOR); // ★ সলিড কালার ব্লেন্ড
 
     // Mode 1: Solid Visible
     if (chamsint == 1) {
@@ -189,7 +197,7 @@ void new_glDrawElements(unsigned int mode, int count, unsigned int type, const v
         p_glDepthMask(GL_FALSE); 
         p_glDisable(GL_DEPTH_TEST);
         p_glDisable(GL_CULL_FACE);
-        p_glBlendColor(inWallColor.x, inWallColor.y, inWallColor.z, 1.0f);
+        p_glBlendColor(visibleColor.x, visibleColor.y, visibleColor.z, 0.5f);
         old_glDrawElements(mode, count, type, indices);
         p_glEnable(GL_DEPTH_TEST);
         p_glEnable(GL_CULL_FACE);
@@ -197,19 +205,21 @@ void new_glDrawElements(unsigned int mode, int count, unsigned int type, const v
     }
     // Mode 3: Hybrid Professional
     else if (chamsint == 3) {
-        // ভেতরের দেওয়াল (Sky Blue)
+        // 1. ভেতরের দেওয়াল (Sky Blue)
         p_glDisable(GL_DEPTH_TEST);
         p_glDisable(GL_CULL_FACE); 
         p_glBlendColor(inWallColor.x, inWallColor.y, inWallColor.z, 1.0f);
         old_glDrawElements(mode, count, type, indices);
 
-        // বাইরের দেওয়াল (Cyan)
+        // 2. বাইরের দেওয়াল (Dark Green)
         p_glEnable(GL_DEPTH_TEST);
         p_glDepthMask(GL_FALSE); // ক্যারেক্টার দৃশ্যমানতার জন্য
+        p_glDepthFunc(GL_LESS);
         p_glBlendColor(visibleColor.x, visibleColor.y, visibleColor.z, 1.0f);
         old_glDrawElements(mode, count, type, indices);
         
         p_glDepthMask(GL_TRUE);
+        p_glDepthFunc(GL_LEQUAL);
         p_glEnable(GL_CULL_FACE);
     }
 
@@ -233,7 +243,8 @@ void RenderHook() {
     p_glDisable      = (void (*)(unsigned int))                   dlsym(handle, "glDisable");
     p_glCullFace     = (void (*)(unsigned int))                   dlsym(handle, "glCullFace");
     p_glDepthMask    = (void (*)(unsigned char))                  dlsym(handle, "glDepthMask");
-    p_glGetFloatv    = (void (*)(unsigned int, float *))          dlsym(handle, "glGetFloatv");
+    p_glDepthFunc    = (void (*)(unsigned int))                   dlsym(handle, "glDepthFunc");
+    p_glGetUniformfv = (void (*)(unsigned int, int, float*))      dlsym(handle, "glGetUniformfv");
 
     void *pGet = dlsym(handle, "glGetUniformLocation");
     if (pGet) HOOK_FN(pGet, (void*)new_glGetUniformLocation, (void**)&old_glGetUniformLocation);
