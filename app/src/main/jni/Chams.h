@@ -140,12 +140,11 @@ void new_glDrawElements(unsigned int mode, int count, unsigned int type, const v
 
     // ★ Distance Filter (Fixed using matrix translation)
     if (g_MaxDistance > 0.0f) {
-        // hlslcc_mtx4x4unity_ObjectToWorld[3] is the translation column
         int objLoc = old_glGetUniformLocation(currProgram, "hlslcc_mtx4x4unity_ObjectToWorld[3]");
         int camLoc = old_glGetUniformLocation(currProgram, "_WorldSpaceCameraPos");
         
         if (objLoc != -1 && camLoc != -1) {
-            float objVec[4]; // Translation is vec4 (x, y, z, 1)
+            float objVec[4]; 
             float cam[3];
             p_glGetUniformfv(currProgram, objLoc, objVec);
             p_glGetUniformfv(currProgram, camLoc, cam);
@@ -153,18 +152,6 @@ void new_glDrawElements(unsigned int mode, int count, unsigned int type, const v
             float dx = objVec[0] - cam[0];
             float dz = objVec[2] - cam[2];
             float dist = sqrt(dx*dx + dz*dz);
-
-            // Log for debugging
-            static std::chrono::steady_clock::time_point lastLogTime;
-            auto now = std::chrono::steady_clock::now();
-            if (std::chrono::duration_cast<std::chrono::milliseconds>(now - lastLogTime).count() > 1000) {
-                lastLogTime = now;
-                std::ofstream logFile("/sdcard/Documents/Chams_Debug.txt", std::ios::app);
-                if (logFile.is_open()) {
-                    logFile << "Dist: " << dist << " | ObjZ: " << objVec[2] << " | CamZ: " << cam[2] << " | Max: " << g_MaxDistance << "\n";
-                    logFile.close();
-                }
-            }
 
             if (dist > g_MaxDistance) {
                 return old_glDrawElements(mode, count, type, indices);
@@ -180,7 +167,6 @@ void new_glDrawElements(unsigned int mode, int count, unsigned int type, const v
     }
     performRGBChange();
 
-    // Draw original game object
     old_glDrawElements(mode, count, type, indices);
 
     p_glEnable(GL_BLEND);
@@ -209,12 +195,12 @@ void new_glDrawElements(unsigned int mode, int count, unsigned int type, const v
         p_glEnable(GL_DEPTH_TEST);
         p_glDepthFunc(GL_LESS); 
         
-        // 1. Draw inner walls (Sky Blue) by culling FRONT faces
+        // 1. Inner walls
         p_glCullFace(GL_FRONT); 
         p_glBlendColor(inWallColor.x, inWallColor.y, inWallColor.z, 1.0f);
         old_glDrawElements(mode, count, type, indices);
 
-        // 2. Draw outer walls (Dark Green) by culling BACK faces
+        // 2. Outer walls
         p_glCullFace(GL_BACK); 
         p_glBlendColor(visibleColor.x, visibleColor.y, visibleColor.z, 1.0f);
         old_glDrawElements(mode, count, type, indices);
