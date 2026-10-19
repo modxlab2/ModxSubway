@@ -274,7 +274,7 @@ jobjectArray GetFeatureList(JNIEnv* env, jobject) {
         OBFUSCATE("Category_Chams"),
         
         OBFUSCATE("119_Toggle_Enable Chams"),
-        OBFUSCATE("120_Spinner_Chams Mode_Off,Solid Visible,X-Ray,Hybrid Professional"),
+        OBFUSCATE("120_Spinner_Chams Mode_Off,Solid Visible,X-Ray,Hybrid Opaque"),
         OBFUSCATE("125_Spinner_Color Preset_Dark Green / Sky Blue,Neon Green / Red,Cyan / Magenta"),
         OBFUSCATE("126_Spinner_Shader Target_Trains Only (_Displacement),All Objects (_MainTex)"),
         
