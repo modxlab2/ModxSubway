@@ -42,26 +42,25 @@ struct Vec4 {
 static void *handle = nullptr;
 std::vector<std::string> shaders;
 
-int chamsint = 3; // Hybrid
+int chamsint = 3; // Default: Hybrid Professional
 bool g_ChamsEnabled = false;
 std::string mineShader = "_Displacement"; 
-float g_MaxDistance = 60.0f; // ★ ডিফল্ট দূরত্ব ২টি ট্রেনের জন্য ৬০
+float g_MaxDistance = 60.0f; // Default distance
 
 // ================================================================
-//  Color Presets (Dark Green / Light Sky Blue)
+//  Color Presets
 // ================================================================
 struct ColorPreset { const char* name; Vec4 visible; Vec4 inWall; };
 static const ColorPreset kColorPresets[] = {
-    { "Dark Green / Sky Blue", {0.00f, 0.40f, 0.00f, 1.0f}, {0.40f, 0.80f, 1.00f, 1.0f} }, // ★ গাঢ় সবুজ এবং হালকা আকাশী
-    { "Neon Cyan / Blue",      {0.00f, 1.00f, 1.00f, 1.0f}, {0.20f, 0.60f, 1.00f, 1.0f} },
-    { "Neon Green / Red",      {0.00f, 1.00f, 0.00f, 1.0f}, {1.00f, 0.00f, 0.00f, 1.0f} },
-    { "Yellow / Blue",         {1.00f, 0.90f, 0.10f, 1.0f}, {0.15f, 0.40f, 1.00f, 1.0f} },
+    { "Dark Green / Sky Blue", {0.0f, 0.5f, 0.0f, 1.0f}, {0.3f, 0.8f, 1.0f, 1.0f} },
+    { "Neon Green / Red",      {0.0f, 1.0f, 0.0f, 1.0f}, {1.0f, 0.0f, 0.0f, 1.0f} },
+    { "Cyan / Magenta",        {0.0f, 1.0f, 1.0f, 1.0f}, {1.0f, 0.0f, 1.0f, 1.0f} },
 };
 static const int kColorPresetCount = sizeof(kColorPresets) / sizeof(kColorPresets[0]);
 
 bool enableRainbow = false, enableRainbowWall = false;
-Vec4 visibleColor = Vec4(0.00f, 0.40f, 0.00f, 1.0f);
-Vec4 inWallColor  = Vec4(0.40f, 0.80f, 1.00f, 1.0f);
+Vec4 visibleColor = Vec4(0.0f, 0.5f, 0.0f, 1.0f);
+Vec4 inWallColor  = Vec4(0.3f, 0.8f, 1.0f, 1.0f);
 
 // ================================================================
 //  Shader Presets
@@ -96,18 +95,9 @@ void (*p_glLineWidth)(float)                            = nullptr;
 void (*p_glBlendFunc)(unsigned int, unsigned int)       = nullptr;
 void (*p_glDisable)(unsigned int)                       = nullptr;
 void (*p_glCullFace)(unsigned int)                      = nullptr;
+void (*p_glDepthFunc)(unsigned int)                     = nullptr; 
 void (*p_glDepthMask)(unsigned char)                    = nullptr;
-void (*p_glDepthFunc)(unsigned int)                     = nullptr;
-void (*p_glGetUniformfv)(unsigned int, int, float*)     = nullptr; 
-
-const char *isDumpLocation = "/sdcard/Documents/Shaders.txt";
-void dumpShadersToFile() {
-    std::ofstream f(isDumpLocation, std::ios::out | std::ios::trunc);
-    if (f.is_open()) {
-        for (const auto& s : shaders) f << s << "\n";
-        f.close();
-    }
-}
+void (*p_glGetUniformfv)(unsigned int, int, float*)     = nullptr;
 
 int (*old_glGetUniformLocation)(unsigned int, const char *) = nullptr;
 int new_glGetUniformLocation(unsigned int program, const char *name) {
@@ -121,14 +111,12 @@ int new_glGetUniformLocation(unsigned int program, const char *name) {
 }
 
 // ================================================================
-//  glDrawElements hook
+//  glDrawElements hook — Final Perfect Fix
 // ================================================================
 void (*old_glDrawElements)(unsigned int, int, unsigned int, const void *) = nullptr;
 void new_glDrawElements(unsigned int mode, int count, unsigned int type, const void *indices) {
 
-    // Ignore character and small objects
     int minCount = (mineShader == "_Displacement") ? 1500 : 3000;
-    
     if (mode != GL_TRIANGLES || count < minCount) {
         return old_glDrawElements(mode, count, type, indices);
     }
@@ -149,23 +137,19 @@ void new_glDrawElements(unsigned int mode, int count, unsigned int type, const v
         return old_glDrawElements(mode, count, type, indices);
     }
 
-    // ★ নিখুঁত দূরত্ব নির্ণয় (Unity Uniforms ব্যবহার করে)
+    // ★ Distance Logic (Z-Axis Focused)
     if (g_MaxDistance > 0.0f) {
         int objLoc = old_glGetUniformLocation(currProgram, "hlslcc_mtx4x4unity_ObjectToWorld[0]");
         int camLoc = old_glGetUniformLocation(currProgram, "_WorldSpaceCameraPos");
-        
         if (objLoc != -1 && camLoc != -1) {
             float mat[16];
             float cam[3];
             p_glGetUniformfv(currProgram, objLoc, mat);
             p_glGetUniformfv(currProgram, camLoc, cam);
             
-            float dx = mat[12] - cam[0];
-            float dy = mat[13] - cam[1];
-            float dz = mat[14] - cam[2];
-            float dist = sqrt(dx*dx + dy*dy + dz*dz);
-            
-            if (dist > g_MaxDistance) {
+            // Z-Distance calculation to avoid side objects
+            float dz = fabs(mat[14] - cam[2]); 
+            if (dz > g_MaxDistance) {
                 return old_glDrawElements(mode, count, type, indices);
             }
         }
@@ -179,11 +163,11 @@ void new_glDrawElements(unsigned int mode, int count, unsigned int type, const v
     }
     performRGBChange();
 
-    // মূল গেম অবজেক্ট ড্র করা
+    // Draw original game object
     old_glDrawElements(mode, count, type, indices);
 
     p_glEnable(GL_BLEND);
-    p_glBlendFunc(GL_ONE, GL_CONSTANT_COLOR); // ★ সলিড কালার ব্লেন্ড
+    p_glBlendFunc(GL_ZERO, GL_CONSTANT_COLOR); 
 
     // Mode 1: Solid Visible
     if (chamsint == 1) {
@@ -197,7 +181,7 @@ void new_glDrawElements(unsigned int mode, int count, unsigned int type, const v
         p_glDepthMask(GL_FALSE); 
         p_glDisable(GL_DEPTH_TEST);
         p_glDisable(GL_CULL_FACE);
-        p_glBlendColor(visibleColor.x, visibleColor.y, visibleColor.z, 0.5f);
+        p_glBlendColor(visibleColor.x, visibleColor.y, visibleColor.z, 1.0f);
         old_glDrawElements(mode, count, type, indices);
         p_glEnable(GL_DEPTH_TEST);
         p_glEnable(GL_CULL_FACE);
@@ -205,21 +189,20 @@ void new_glDrawElements(unsigned int mode, int count, unsigned int type, const v
     }
     // Mode 3: Hybrid Professional
     else if (chamsint == 3) {
-        // 1. ভেতরের দেওয়াল (Sky Blue)
-        p_glDisable(GL_DEPTH_TEST);
+        // 1. Inner walls (Sky Blue) - ONLY BEHIND CHARACTER
+        p_glEnable(GL_DEPTH_TEST);
+        p_glDepthFunc(GL_GREATER); // Character preserved
         p_glDisable(GL_CULL_FACE); 
         p_glBlendColor(inWallColor.x, inWallColor.y, inWallColor.z, 1.0f);
         old_glDrawElements(mode, count, type, indices);
 
-        // 2. বাইরের দেওয়াল (Dark Green)
-        p_glEnable(GL_DEPTH_TEST);
-        p_glDepthMask(GL_FALSE); // ক্যারেক্টার দৃশ্যমানতার জন্য
-        p_glDepthFunc(GL_LESS);
+        // 2. Outer walls (Dark Green)
+        p_glDepthFunc(GL_LEQUAL); 
+        p_glDepthMask(GL_FALSE); 
         p_glBlendColor(visibleColor.x, visibleColor.y, visibleColor.z, 1.0f);
         old_glDrawElements(mode, count, type, indices);
         
         p_glDepthMask(GL_TRUE);
-        p_glDepthFunc(GL_LEQUAL);
         p_glEnable(GL_CULL_FACE);
     }
 
@@ -227,9 +210,6 @@ void new_glDrawElements(unsigned int mode, int count, unsigned int type, const v
     p_glBlendColor(0, 0, 0, 1);
 }
 
-// ================================================================
-//  Setup hooks
-// ================================================================
 void RenderHook() {
     if (!handle) handle = dlopen("libGLESv2.so", RTLD_LAZY);
     if (!handle) return;
@@ -242,8 +222,9 @@ void RenderHook() {
     p_glBlendFunc    = (void (*)(unsigned int, unsigned int))     dlsym(handle, "glBlendFunc");
     p_glDisable      = (void (*)(unsigned int))                   dlsym(handle, "glDisable");
     p_glCullFace     = (void (*)(unsigned int))                   dlsym(handle, "glCullFace");
-    p_glDepthMask    = (void (*)(unsigned char))                  dlsym(handle, "glDepthMask");
+    
     p_glDepthFunc    = (void (*)(unsigned int))                   dlsym(handle, "glDepthFunc");
+    p_glDepthMask    = (void (*)(unsigned char))                  dlsym(handle, "glDepthMask");
     p_glGetUniformfv = (void (*)(unsigned int, int, float*))      dlsym(handle, "glGetUniformfv");
 
     void *pGet = dlsym(handle, "glGetUniformLocation");
