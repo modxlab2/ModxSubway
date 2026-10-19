@@ -3261,11 +3261,10 @@ private void syncToggles(int[] featNums, boolean on) {
          // ================================================================
     // Perfect Inline Dropdown (No PopupWindow, No Bugs)
     // ================================================================
-    private void Spinner(LinearLayout linLayout, final int featNum, final String featName, final String list) {
+        private void Spinner(LinearLayout linLayout, final int featNum, final String featName, final String list) {
         final Context ctx = getContext;
         final List<String> lists = new LinkedList<String>(Arrays.asList(list.split(",")));
 
-        // Main Row
         final LinearLayout spinnerRow = new LinearLayout(ctx);
         spinnerRow.setLayoutParams(rowLp(6, 3, 6, 3));
         spinnerRow.setBackground(cardBg(COLOR_CARD, COLOR_CARD_BORDER, 6));
@@ -3293,61 +3292,80 @@ private void syncToggles(int[] featNums, boolean on) {
         
         tvName.setText(featName + ": " + lists.get(initIdx));
 
-        // Dropdown List (Inline)
-        final LinearLayout dropdownList = new LinearLayout(ctx);
-        dropdownList.setOrientation(LinearLayout.VERTICAL);
-        dropdownList.setBackground(cardBg(COLOR_BG_TOP, withAlpha(COLOR_ACCENT, 0xAA), 8));
-        dropdownList.setPadding(dp(4), dp(4), dp(4), dp(4));
-        dropdownList.setVisibility(View.GONE);
-        
-        LinearLayout.LayoutParams dlLp = new LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT);
-        dlLp.setMargins(dp(6), dp(2), dp(6), dp(6));
-        dropdownList.setLayoutParams(dlLp);
-
-        for (int i = 0; i < lists.size(); i++) {
-            final int index = i;
-            TextView tv = new TextView(ctx);
-            tv.setText(lists.get(i));
-            tv.setTextColor(TEXT_COLOR_2);
-            tv.setTypeface(fontMedium);
-            tv.setTextSize(12f * currentScale);
-            tv.setPadding(dp(12), dp(12), dp(12), dp(12));
-            
-            if (index == initIdx) {
-                tv.setTextColor(COLOR_ACCENT);
-                tv.setBackground(cardBg(withAlpha(COLOR_ACCENT, 0x1A), 0, 4));
-            }
-
-            tv.setOnClickListener(new View.OnClickListener() {
-                @Override
-                public void onClick(View v) {
-                    tvName.setText(featName + ": " + lists.get(index));
-                    Preferences.changeFeatureInt(featName, featNum, index);
-                    
-                    // Close dropdown
-                    dropdownList.setVisibility(View.GONE);
-                    arrowIv.animate().rotation(0f).setDuration(200).start();
-                }
-            });
-            dropdownList.addView(tv);
-        }
-
-        // Toggle Logic
         spinnerRow.setOnClickListener(new View.OnClickListener() {
+            private PopupWindow activePopup = null;
+
             @Override
             public void onClick(View v) {
-                if (dropdownList.getVisibility() == View.VISIBLE) {
-                    dropdownList.setVisibility(View.GONE);
+                // ★ Toggle Close: If open, close it
+                if (activePopup != null && activePopup.isShowing()) {
+                    activePopup.dismiss();
                     arrowIv.animate().rotation(0f).setDuration(200).start();
-                } else {
-                    dropdownList.setVisibility(View.VISIBLE);
-                    arrowIv.animate().rotation(180f).setDuration(200).start();
+                    return;
                 }
+
+                LinearLayout popupLayout = new LinearLayout(ctx);
+                popupLayout.setOrientation(LinearLayout.VERTICAL);
+                popupLayout.setBackground(cardBg(COLOR_BG_TOP, withAlpha(COLOR_ACCENT, 0xAA), 8));
+                popupLayout.setPadding(dp(4), dp(4), dp(4), dp(4));
+
+                ScrollView scrollView = new ScrollView(ctx);
+                LinearLayout listLayout = new LinearLayout(ctx);
+                listLayout.setOrientation(LinearLayout.VERTICAL);
+
+                final PopupWindow popupWindow = new PopupWindow(popupLayout, 
+                        spinnerRow.getWidth(), WRAP_CONTENT, true);
+                popupWindow.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
+                popupWindow.setOutsideTouchable(false); // ★ Fixed: Prevents instant close
+                popupWindow.setFocusable(false); 
+                activePopup = popupWindow;
+
+                arrowIv.animate().rotation(180f).setDuration(200).start();
+
+                popupWindow.setOnDismissListener(new PopupWindow.OnDismissListener() {
+                    @Override
+                    public void onDismiss() {
+                        arrowIv.animate().rotation(0f).setDuration(200).start();
+                    }
+                });
+
+                for (int i = 0; i < lists.size(); i++) {
+                    final int index = i;
+                    TextView tv = new TextView(ctx);
+                    tv.setText(lists.get(i));
+                    tv.setTextColor(TEXT_COLOR_2);
+                    tv.setTypeface(fontMedium);
+                    tv.setTextSize(12f * currentScale);
+                    tv.setPadding(dp(12), dp(12), dp(12), dp(12));
+                    
+                    if (index == initIdx) {
+                        tv.setTextColor(COLOR_ACCENT);
+                        tv.setBackground(cardBg(withAlpha(COLOR_ACCENT, 0x1A), 0, 4));
+                    }
+
+                    tv.setOnClickListener(new View.OnClickListener() {
+                        @Override
+                        public void onClick(View v) {
+                            tvName.setText(featName + ": " + lists.get(index));
+                            Preferences.changeFeatureInt(featName, featNum, index);
+                            popupWindow.dismiss();
+                        }
+                    });
+                    listLayout.addView(tv);
+                }
+
+                scrollView.addView(listLayout);
+                if (lists.size() > 5) {
+                    popupLayout.addView(scrollView, new LinearLayout.LayoutParams(MATCH_PARENT, dp(200)));
+                } else {
+                    popupLayout.addView(scrollView, new LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT));
+                }
+
+                popupWindow.showAsDropDown(spinnerRow, 0, 0);
             }
         });
 
         linLayout.addView(spinnerRow);
-        linLayout.addView(dropdownList);
     }
     
     
