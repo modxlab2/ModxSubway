@@ -21,6 +21,7 @@
 
 #define LIB OBFUSCATE("libil2cpp.so")
 
+// ★ Vector3 definition for Teleport
 struct Vector3 {
     float x, y, z;
 };
@@ -76,7 +77,7 @@ static inline long long nowMs() {
 }
 
 // ================================================================
-//   FEATURE STATE (Added Missing States)
+//   FEATURE STATE
 // ================================================================
 static std::atomic<bool> g_FrontalImpact      {false};
 static std::atomic<bool> g_SideImpact         {false};
@@ -101,25 +102,76 @@ static std::atomic<long long> g_NoCollisionStartMs {0};
 // ================================================================
 //                     ORIGINAL FUNCTION POINTERS
 // ================================================================
+// Player & Movement
 static float (*old_CalculateGravity)(...)           = nullptr;
-static void  (*old_set_SpeedMultiplier)(...)        = nullptr;
+static void  (*old_set_Gravity)(...)                = nullptr;
 static void  (*old_UnityTimeManager_Update)(...)    = nullptr;
+static void  (*old_SetT)(...)                       = nullptr;
+static void  (*old_SetGravityMultiplier)(...)       = nullptr;
+static void  (*old_set_SpeedMultiplier)(...)        = nullptr;
+
+// Powers
+static void  (*old_AdjustDuration)(...)             = nullptr;
+static void  (*old_ResetDuration)(...)              = nullptr;
 static float (*old_Power_GetTimeLeft)(...)          = nullptr;
 static float (*old_Power_GetDuration)(...)          = nullptr;
+static void* (*old_ActivateOrAddPower)(...)         = nullptr;
+static bool  (*old_ActivatePower)(...)              = nullptr;
+static void* (*old_AddPower)(...)                   = nullptr;
+static bool  (*old_TryGetPower)(...)                = nullptr;
+static bool  (*old_IsPowerActive)(...)              = nullptr;
+static void  (*old_AddPowerCharge)(...)             = nullptr;
+
+// Teleport
 static void  (*old_CharacterMotor_Teleport)(...)    = nullptr;
+static void  (*old_WorldReposition)(...)            = nullptr;
+
+// Protection
 static void  (*old_set_DisableBoundaryImpact)(...)  = nullptr;
 static void  (*old_MovingTrain_Update)(...)         = nullptr;
+static void  (*old_Displace)(...)                   = nullptr;
 static void  (*old_ChaserGraphics_SetVisible)(...)  = nullptr;
+static void  (*old_HandleOnCharacterKilled)(...)    = nullptr;
+static void  (*old_HandleOnCharacterStumble)(...)   = nullptr;
 
+// Revive
 static void  (*old_CharacterStumble_Kill)(...)      = nullptr;
 static void  (*old_CharacterStumble_Revive)(...)    = nullptr;
-static int   (*old_get_AvailableKeysForUse)(...)    = nullptr;
+static void  (*old_OnActivated)(...)                = nullptr;
+static void* (*old_CreateActiveBonus)(...)          = nullptr;
+static bool  (*old_TryCreateExtraActiveBonus)(...)  = nullptr;
+static void  (*old_SetActiveBonus)(...)             = nullptr;
+static void  (*old_ActiveReviveBonus_ctor)(...)     = nullptr;
+
+// Camera
+static void  (*old_ForceSetState)(...)              = nullptr;
+static void  (*old_SetOverrideState)(...)           = nullptr;
+static void  (*old_SpeedUpOrSkipSequence)(...)      = nullptr;
+static void  (*old_SwitchState)(...)                = nullptr;
 static void  (*old_set_FieldOfView)(...)            = nullptr;
-static void  (*old_RunSessionData_AddCoins)(...)    = nullptr;
-static void  (*old_RunSessionData_AddKeys)(...)     = nullptr;
+
+// Fog & Visuals
+static void  (*old_ApplyRenderSettings)(...)        = nullptr;
+
+// Currency & Data
+static int   (*old_get_AvailableKeysForUse)(...)    = nullptr;
+static int   (*old_ConsumeKeysAndGetRemaining)(...) = nullptr;
+static void  (*old_AddCoins)(...)                   = nullptr;
+static void  (*old_AddKeys)(...)                    = nullptr;
+static void  (*old_AddSeasonTokens)(...)            = nullptr;
+static void  (*old_AddSeasonPoints)(...)            = nullptr;
+static void  (*old_AddCityTourTokens)(...)          = nullptr;
+static void  (*old_AddInRunCollectibleTokens)(...)  = nullptr;
+static void  (*old_AddBonusCoins)(...)              = nullptr;
+static void  (*old_AddPoints)(...)                  = nullptr;
 static int   (*old_ConsumeCoinsAndGetRemaining)(...) = nullptr;
 static int   (*old_GetCurrency)(...)                = nullptr;
+
+// Ads
 static bool  (*old_TryShowInterstitial)(...)        = nullptr;
+static bool  (*old_TryShowPlacement)(...)           = nullptr;
+
+// Gameplay Core
 static bool  (*old_CheckFrontalImpact)(...)     = nullptr;
 static bool  (*old_CheckSideImpact)(...)        = nullptr;
 static int   (*old_get_JumpLimit)(...)          = nullptr;
@@ -129,14 +181,28 @@ static float (*old_get_LaneChangeDuration)(...)= nullptr;
 static int   (*old_get_BaseMultiplierSum)(...)  = nullptr;
 static bool  (*old_get_detectCollisions)(...)   = nullptr;
 
+
 // ================================================================
 //                       HOOK IMPLEMENTATIONS
 // ================================================================
+// Player & Movement
 static float new_CalculateGravity(void* self) {
     if (g_NoGravity.load()) return 0.0f;
     return old_CalculateGravity ? old_CalculateGravity(self) : 0.0f;
 }
-
+static void new_set_Gravity(void* self, float value) {
+    if (g_NoGravity.load()) value = 0.0f;
+    if (old_set_Gravity) old_set_Gravity(self, value);
+}
+static void new_UnityTimeManager_Update(void* self) {
+    if (old_UnityTimeManager_Update) old_UnityTimeManager_Update(self);
+}
+static void new_SetT(void* self, float t) {
+    if (old_SetT) old_SetT(self, t);
+}
+static void new_SetGravityMultiplier(void* self, float value) {
+    if (old_SetGravityMultiplier) old_SetGravityMultiplier(self, value);
+}
 static void new_set_SpeedMultiplier(void* self, float value) {
     if (g_PlayerSpeed.load() != 10) {
         value = (float)g_PlayerSpeed.load() / 10.0f;
@@ -144,10 +210,15 @@ static void new_set_SpeedMultiplier(void* self, float value) {
     if (old_set_SpeedMultiplier) old_set_SpeedMultiplier(self, value);
 }
 
-static void new_UnityTimeManager_Update(void* self) {
-    if (old_UnityTimeManager_Update) old_UnityTimeManager_Update(self);
+// Powers
+static void new_AdjustDuration(void* self, float duration) {
+    if (g_PowerDuration.load() > 0) duration = 999.0f;
+    if (old_AdjustDuration) old_AdjustDuration(self, duration);
 }
-
+static void new_ResetDuration(void* self) {
+    if (g_PowerDuration.load() > 0) return;
+    if (old_ResetDuration) old_ResetDuration(self);
+}
 static float new_Power_GetTimeLeft(void* self) {
     if (g_PowerDuration.load() > 0) return 999.0f;
     return old_Power_GetTimeLeft ? old_Power_GetTimeLeft(self) : 0.0f;
@@ -156,7 +227,26 @@ static float new_Power_GetDuration(void* self) {
     if (g_PowerDuration.load() > 0) return 999.0f;
     return old_Power_GetDuration ? old_Power_GetDuration(self) : 0.0f;
 }
+static void* new_ActivateOrAddPower(void* self, int type, int level, int charId) {
+    return old_ActivateOrAddPower ? old_ActivateOrAddPower(self, type, level, charId) : nullptr;
+}
+static bool new_ActivatePower(void* self, int type) {
+    return old_ActivatePower ? old_ActivatePower(self, type) : false;
+}
+static void* new_AddPower(void* self, void* config, int level, int charId) {
+    return old_AddPower ? old_AddPower(self, config, level, charId) : nullptr;
+}
+static bool new_TryGetPower(void* self, int type, void* outPower) {
+    return old_TryGetPower ? old_TryGetPower(self, type, outPower) : false;
+}
+static bool new_IsPowerActive(void* self, int type) {
+    return old_IsPowerActive ? old_IsPowerActive(self, type) : false;
+}
+static void new_AddPowerCharge(void* self, void* info, int type, int amount) {
+    if (old_AddPowerCharge) old_AddPowerCharge(self, info, type, amount);
+}
 
+// Teleport
 static void new_CharacterMotor_Teleport(void* self, Vector3 rootPosition) {
     if (g_TeleportDistance.load() > 0 && self) {
         rootPosition.z += (float)g_TeleportDistance.load();
@@ -164,112 +254,179 @@ static void new_CharacterMotor_Teleport(void* self, Vector3 rootPosition) {
     }
     if (old_CharacterMotor_Teleport) old_CharacterMotor_Teleport(self, rootPosition);
 }
+static void new_WorldReposition(void* self, float amount) {
+    if (old_WorldReposition) old_WorldReposition(self, amount);
+}
 
+// Protection
 static void new_set_DisableBoundaryImpact(void* self, bool value) {
     if (g_NoCollision.load()) value = true;
     if (old_set_DisableBoundaryImpact) old_set_DisableBoundaryImpact(self, value); 
 }
-
 static void new_MovingTrain_Update(void* self) {
     if (g_StopTrain.load()) return; 
     if (old_MovingTrain_Update) old_MovingTrain_Update(self);
 }
-
+static void new_Displace(void* self) {
+    if (g_StopTrain.load()) return;
+    if (old_Displace) old_Displace(self);
+}
 static void new_ChaserGraphics_SetVisible(void* self, bool visible) {
     if (g_NoGuardChaser.load()) visible = false;
     if (old_ChaserGraphics_SetVisible) old_ChaserGraphics_SetVisible(self, visible);
 }
-
-static void new_CharacterStumble_Revive(void* self) {
-    if (old_CharacterStumble_Revive) old_CharacterStumble_Revive(self);
+static void new_HandleOnCharacterKilled(void* self, int cause) {
+    if (g_NoGuardChaser.load()) return;
+    if (old_HandleOnCharacterKilled) old_HandleOnCharacterKilled(self, cause);
+}
+static void new_HandleOnCharacterStumble(void* self, int cause) {
+    if (g_NoGuardChaser.load()) return;
+    if (old_HandleOnCharacterStumble) old_HandleOnCharacterStumble(self, cause);
 }
 
-static void new_CharacterStumble_Kill(void* self, void* cause) {
+// Revive
+// ★ Fixed: Added cause2 for struct payload
+static void new_CharacterStumble_Kill(void* self, void* cause, void* cause2) {
     if (g_AutoRevive.load() && old_CharacterStumble_Revive) {
         old_CharacterStumble_Revive(self); 
         return;
     }
-    if (old_CharacterStumble_Kill) old_CharacterStumble_Kill(self, cause);
+    if (old_CharacterStumble_Kill) old_CharacterStumble_Kill(self, cause, cause2);
+}
+static void new_CharacterStumble_Revive(void* self) {
+    if (old_CharacterStumble_Revive) old_CharacterStumble_Revive(self);
+}
+static void new_OnActivated(void* self) {
+    if (old_OnActivated) old_OnActivated(self);
+}
+static void* new_CreateActiveBonus(void* self) {
+    return old_CreateActiveBonus ? old_CreateActiveBonus(self) : nullptr;
+}
+static bool new_TryCreateExtraActiveBonus(void* self, void* bonus) {
+    return old_TryCreateExtraActiveBonus ? old_TryCreateExtraActiveBonus(self, bonus) : false;
+}
+static void new_SetActiveBonus(void* self, void* bonus) {
+    if (old_SetActiveBonus) old_SetActiveBonus(self, bonus);
+}
+static void new_ActiveReviveBonus_ctor(void* self, void* data, void* reward) {
+    if (old_ActiveReviveBonus_ctor) old_ActiveReviveBonus_ctor(self, data, reward);
 }
 
-static int new_get_AvailableKeysForUse(void* self) {
-    if (g_AutoRevive.load()) return 999;
-    return old_get_AvailableKeysForUse ? old_get_AvailableKeysForUse(self) : 0;
+// Camera
+static void new_ForceSetState(void* self, int state) {
+    if (old_ForceSetState) old_ForceSetState(self, state);
 }
-
+static void new_SetOverrideState(void* self, int state, void* creator) {
+    if (old_SetOverrideState) old_SetOverrideState(self, state, creator);
+}
+static void new_SpeedUpOrSkipSequence(void* self) {
+    if (old_SpeedUpOrSkipSequence) old_SpeedUpOrSkipSequence(self);
+}
+static void new_SwitchState(void* self, int state) {
+    if (old_SwitchState) old_SwitchState(self, state);
+}
 static void new_set_FieldOfView(void* self, float value) {
     if (g_FOV.load() > 0) value = (float)g_FOV.load();
     if (old_set_FieldOfView) old_set_FieldOfView(self, value);
 }
 
-static void new_RunSessionData_AddCoins(void* self, int coins) {
+// Fog & Visuals
+static void new_ApplyRenderSettings(void* self) {
+    if (old_ApplyRenderSettings) old_ApplyRenderSettings(self);
+}
+
+// Currency & Data
+static int new_get_AvailableKeysForUse(void* self) {
+    if (g_AutoRevive.load()) return 999;
+    return old_get_AvailableKeysForUse ? old_get_AvailableKeysForUse(self) : 0;
+}
+static int new_ConsumeKeysAndGetRemaining(void* self, int amount) {
+    if (g_AutoRevive.load()) return 999;
+    return old_ConsumeKeysAndGetRemaining ? old_ConsumeKeysAndGetRemaining(self, amount) : 0;
+}
+static void new_AddCoins(void* self, int coins) {
     if (g_UnlimitedCoins.load()) coins = 2000000000;
-    if (old_RunSessionData_AddCoins) old_RunSessionData_AddCoins(self, coins);
+    if (old_AddCoins) old_AddCoins(self, coins);
 }
-
-static void new_RunSessionData_AddKeys(void* self, int keys) {
+static void new_AddKeys(void* self, int keys) {
     if (g_UnlimitedCoins.load()) keys = 9999;
-    if (old_RunSessionData_AddKeys) old_RunSessionData_AddKeys(self, keys);
+    if (old_AddKeys) old_AddKeys(self, keys);
 }
-
+static void new_AddSeasonTokens(void* self, int amount) {
+    if (old_AddSeasonTokens) old_AddSeasonTokens(self, amount);
+}
+static void new_AddSeasonPoints(void* self, int amount) {
+    if (old_AddSeasonPoints) old_AddSeasonPoints(self, amount);
+}
+static void new_AddCityTourTokens(void* self, int amount) {
+    if (old_AddCityTourTokens) old_AddCityTourTokens(self, amount);
+}
+static void new_AddInRunCollectibleTokens(void* self, int amount) {
+    if (old_AddInRunCollectibleTokens) old_AddInRunCollectibleTokens(self, amount);
+}
+static void new_AddBonusCoins(void* self, int coins) {
+    if (old_AddBonusCoins) old_AddBonusCoins(self, coins);
+}
+static void new_AddPoints(void* self, double points) {
+    if (old_AddPoints) old_AddPoints(self, points);
+}
 static int new_ConsumeCoinsAndGetRemaining(void* self, int amount) {
     if (g_UnlimitedCoins.load()) return 999999999;
     return old_ConsumeCoinsAndGetRemaining ? old_ConsumeCoinsAndGetRemaining(self, amount) : 0;
 }
-
 static int new_GetCurrency(void* self, int currencyType) {
     if (!self) return 0;
     if (g_UnlimitedCoins.load()) return 99999999;
     return old_GetCurrency ? old_GetCurrency(self, currencyType) : 0;
 }
 
-static bool new_TryShowInterstitial(void* self, int location) { // Fixed: void* to int
+// Ads
+static bool new_TryShowInterstitial(void* self, int location) {
     if (g_NoAds.load()) return false;
     return old_TryShowInterstitial ? old_TryShowInterstitial(self, location) : false;
 }
+static bool new_TryShowPlacement(void* self, void* placement) {
+    if (g_NoAds.load()) return false;
+    return old_TryShowPlacement ? old_TryShowPlacement(self, placement) : false;
+}
 
-static bool new_CheckFrontalImpact(void* self, void* other) {
+// Gameplay Core
+// ★ Fixed: Added other2 for struct payload
+static bool new_CheckFrontalImpact(void* self, void* other, void* other2) {
     if (!self) return false;
     if (g_FrontalImpact.load()) return false;
-    return old_CheckFrontalImpact ? old_CheckFrontalImpact(self, other) : false;
+    return old_CheckFrontalImpact ? old_CheckFrontalImpact(self, other, other2) : false;
 }
-
-static bool new_CheckSideImpact(void* self, void* other) {
+static bool new_CheckSideImpact(void* self, void* other, void* other2) {
     if (!self) return false;
     if (g_SideImpact.load()) return false;
-    return old_CheckSideImpact ? old_CheckSideImpact(self, other) : false;
+    return old_CheckSideImpact ? old_CheckSideImpact(self, other, other2) : false;
 }
-
 static int new_get_JumpLimit(void* self) {
     if (!self) return 0;
     int v = g_JumpLimit.load(); 
     return (v > 0) ? v : (old_get_JumpLimit ? old_get_JumpLimit(self) : 0);
 }
-
 static float new_get_JumpHeight(void* self) {
     if (!self) return 0.0f;
     int v = g_JumpHeight.load();
     return (v > 0) ? (float)v : (old_get_JumpHeight ? old_get_JumpHeight(self) : 0.0f);
 }
-
 static bool new_IsAutoReviveEnabled(void* self) {
     if (!self) return false;
     if (g_AutoRevive.load()) return true;
     return old_IsAutoReviveEnabled ? old_IsAutoReviveEnabled(self) : false;
 }
-
 static float new_get_LaneChangeDuration(void* self) {
     if (!self) return 0.0f;
     if (g_FastLaneChange.load()) return 0.0f;
     return old_get_LaneChangeDuration ? old_get_LaneChangeDuration(self) : 0.0f;
 }
-
 static int new_get_BaseMultiplierSum(void* self) {
     if (!self) return 0;
     int v = g_ScoreMultiplier.load();
     return (v > 0) ? v : (old_get_BaseMultiplierSum ? old_get_BaseMultiplierSum(self) : 0);
 }
-
 static bool new_get_detectCollisions(void* self) {
     if (!self) return true;
     if (g_NoCollision.load()) {
@@ -288,14 +445,17 @@ void* hack_thread(void*) {
     while (!isLibraryLoaded(LIB)) sleep(1);
     sleep(3);
 
+    // Player & Movement
     {
         auto CM = new LoadClass(OBFUSCATE("SYBO.RunnerCore.Character"), OBFUSCATE("CharacterMotor"));
         if (CM && CM->thisclass) {
             DWORD oTele = CM->GetMethodOffsetByName(OBFUSCATE("Teleport"), 1);
+            DWORD oWorld = CM->GetMethodOffsetByName(OBFUSCATE("WorldReposition"), 1);
             DWORD oBound = CM->GetMethodOffsetByName(OBFUSCATE("set_DisableBoundaryImpact"), 1);
             DWORD oFrontal = CM->GetMethodOffsetByName(OBFUSCATE("CheckFrontalImpact"), 1);
             DWORD oSide    = CM->GetMethodOffsetByName(OBFUSCATE("CheckSideImpact"),    1);
             if (oTele) HOOK_AU((void*)oTele, (void*)new_CharacterMotor_Teleport, old_CharacterMotor_Teleport);
+            if (oWorld) HOOK_AU((void*)oWorld, (void*)new_WorldReposition, old_WorldReposition);
             if (oBound) HOOK_AU((void*)oBound, (void*)new_set_DisableBoundaryImpact, old_set_DisableBoundaryImpact);
             if (oFrontal) HOOK_AU((void*)oFrontal, (void*)new_CheckFrontalImpact, old_CheckFrontalImpact);
             if (oSide) HOOK_AU((void*)oSide, (void*)new_CheckSideImpact, old_CheckSideImpact);
@@ -305,75 +465,24 @@ void* hack_thread(void*) {
         auto CMA = new LoadClass(OBFUSCATE("SYBO.RunnerCore.Character"), OBFUSCATE("CharacterMotorAbilities"));
         if (CMA && CMA->thisclass) {
             DWORD oGrav = CMA->GetMethodOffsetByName(OBFUSCATE("CalculateGravity"), 0);
+            DWORD oSetGrav = CMA->GetMethodOffsetByName(OBFUSCATE("set_Gravity"), 1);
             DWORD oSpeed = CMA->GetMethodOffsetByName(OBFUSCATE("set_SpeedMultiplier"), 1);
             DWORD oJL = CMA->GetMethodOffsetByName(OBFUSCATE("get_JumpLimit"), 0);
             DWORD oJH = CMA->GetMethodOffsetByName(OBFUSCATE("get_JumpHeight"), 0);
             DWORD oLC = CMA->GetMethodOffsetByName(OBFUSCATE("get_LaneChangeDuration"), 0);
             if (oGrav) HOOK_AU((void*)oGrav, (void*)new_CalculateGravity, old_CalculateGravity);
+            if (oSetGrav) HOOK_AU((void*)oSetGrav, (void*)new_set_Gravity, old_set_Gravity);
             if (oSpeed) HOOK_AU((void*)oSpeed, (void*)new_set_SpeedMultiplier, old_set_SpeedMultiplier);
             if (oJL) HOOK_AU((void*)oJL, (void*)new_get_JumpLimit, old_get_JumpLimit);
             if (oJH) HOOK_AU((void*)oJH, (void*)new_get_JumpHeight, old_get_JumpHeight);
             if (oLC) HOOK_AU((void*)oLC, (void*)new_get_LaneChangeDuration, old_get_LaneChangeDuration);
         }
-    }
-    {
-        auto P = new LoadClass(OBFUSCATE("SYBO.RunnerCore.Powers"), OBFUSCATE("Power"));
-        if (P && P->thisclass) {
-            DWORD oTimeLeft = P->GetMethodOffsetByName(OBFUSCATE("GetTimeLeft"), 0);
-            DWORD oDur = P->GetMethodOffsetByName(OBFUSCATE("GetDuration"), 0);
-            if (oTimeLeft) HOOK_AU((void*)oTimeLeft, (void*)new_Power_GetTimeLeft, old_Power_GetTimeLeft);
-            if (oDur) HOOK_AU((void*)oDur, (void*)new_Power_GetDuration, old_Power_GetDuration);
-        }
-    }
-    {
-        auto MT = new LoadClass(OBFUSCATE("SYBO.Subway"), OBFUSCATE("MovingTrain"));
-        if (MT && MT->thisclass) {
-            DWORD oUpdate = MT->GetMethodOffsetByName(OBFUSCATE("Update"), 0);
-            if (oUpdate) HOOK_AU((void*)oUpdate, (void*)new_MovingTrain_Update, old_MovingTrain_Update);
-        }
-        auto CG = new LoadClass(OBFUSCATE("SYBO.Subway"), OBFUSCATE("ChaserGraphics"));
-        if (CG && CG->thisclass) {
-            DWORD oVisible = CG->GetMethodOffsetByName(OBFUSCATE("SetVisible"), 1);
-            if (oVisible) HOOK_AU((void*)oVisible, (void*)new_ChaserGraphics_SetVisible, old_ChaserGraphics_SetVisible);
-        }
-    }
-    {
-        auto CS = new LoadClass(OBFUSCATE("SYBO.Subway"), OBFUSCATE("CharacterStumble"));
-        if (CS && CS->thisclass) {
-            DWORD oKill = CS->GetMethodOffsetByName(OBFUSCATE("Kill"), 1); 
-            DWORD oRevive = CS->GetMethodOffsetByName(OBFUSCATE("Revive"), 0);
-            if (oKill) HOOK_AU((void*)oKill, (void*)new_CharacterStumble_Kill, old_CharacterStumble_Kill);
-            if (oRevive) HOOK_AU((void*)oRevive, (void*)new_CharacterStumble_Revive, old_CharacterStumble_Revive);
-        }
-        auto RSD = new LoadClass(OBFUSCATE("SYBO.Subway"), OBFUSCATE("RunSessionData"));
-        if (RSD && RSD->thisclass) {
-            DWORD oKeys = RSD->GetMethodOffsetByName(OBFUSCATE("get_AvailableKeysForUse"), 0);
-            DWORD oCoins = RSD->GetMethodOffsetByName(OBFUSCATE("ConsumeCoinsAndGetRemaining"), 1);
-            DWORD oAddCoins = RSD->GetMethodOffsetByName(OBFUSCATE("AddCoins"), 1);
-            DWORD oAddKeys = RSD->GetMethodOffsetByName(OBFUSCATE("AddKeys"), 1);
-            if (oKeys) HOOK_AU((void*)oKeys, (void*)new_get_AvailableKeysForUse, old_get_AvailableKeysForUse);
-            if (oCoins) HOOK_AU((void*)oCoins, (void*)new_ConsumeCoinsAndGetRemaining, old_ConsumeCoinsAndGetRemaining);
-            if (oAddCoins) HOOK_AU((void*)oAddCoins, (void*)new_RunSessionData_AddCoins, old_RunSessionData_AddCoins);
-            if (oAddKeys) HOOK_AU((void*)oAddKeys, (void*)new_RunSessionData_AddKeys, old_RunSessionData_AddKeys);
-        }
-    }
-    {
-        auto CC = new LoadClass(OBFUSCATE("SYBO.Subway"), OBFUSCATE("CameraContext"));
-        if (CC && CC->thisclass) {
-            DWORD oFov = CC->GetMethodOffsetByName(OBFUSCATE("set_FieldOfView"), 1);
-            if (oFov) HOOK_AU((void*)oFov, (void*)new_set_FieldOfView, old_set_FieldOfView);
-        }
-    }
-    {
-        auto IH = new LoadClass(OBFUSCATE("SYBO.Ads"), OBFUSCATE("InterstitialsHelper"));
-        if (IH && IH->thisclass) {
-            DWORD oInter = IH->GetMethodOffsetByName(OBFUSCATE("TryShowInterstitial"), 1);
-            if (oInter) HOOK_AU((void*)oInter, (void*)new_TryShowInterstitial, old_TryShowInterstitial);
-        }
-        auto WM = new LoadClass(OBFUSCATE("SYBO.Subway.Core.ProfileData"), OBFUSCATE("WalletModel"));
-        if (WM && WM->thisclass) {
-            DWORD oC = WM->GetMethodOffsetByName(OBFUSCATE("GetCurrency"), 1);
-            if (oC) HOOK_AU((void*)oC, (void*)new_GetCurrency, old_GetCurrency);
+        auto MAI = new LoadClass(OBFUSCATE("SYBO.RunnerCore.Character"), OBFUSCATE("MovementAbilityInstance"));
+        if (MAI && MAI->thisclass) {
+            DWORD oT = MAI->GetMethodOffsetByName(OBFUSCATE("SetT"), 1);
+            DWORD oGravM = MAI->GetMethodOffsetByName(OBFUSCATE("SetGravityMultiplier"), 1);
+            if (oT) HOOK_AU((void*)oT, (void*)new_SetT, old_SetT);
+            if (oGravM) HOOK_AU((void*)oGravM, (void*)new_SetGravityMultiplier, old_SetGravityMultiplier);
         }
     }
     {
@@ -383,6 +492,167 @@ void* hack_thread(void*) {
             if (oUpdate) HOOK_AU((void*)oUpdate, (void*)new_UnityTimeManager_Update, old_UnityTimeManager_Update);
         }
     }
+
+    // Powers
+    {
+        auto P = new LoadClass(OBFUSCATE("SYBO.RunnerCore.Powers"), OBFUSCATE("Power"));
+        if (P && P->thisclass) {
+            DWORD oAdj = P->GetMethodOffsetByName(OBFUSCATE("AdjustDuration"), 1);
+            DWORD oRes = P->GetMethodOffsetByName(OBFUSCATE("ResetDuration"), 0);
+            DWORD oTimeLeft = P->GetMethodOffsetByName(OBFUSCATE("GetTimeLeft"), 0);
+            DWORD oDur = P->GetMethodOffsetByName(OBFUSCATE("GetDuration"), 0);
+            if (oAdj) HOOK_AU((void*)oAdj, (void*)new_AdjustDuration, old_AdjustDuration);
+            if (oRes) HOOK_AU((void*)oRes, (void*)new_ResetDuration, old_ResetDuration);
+            if (oTimeLeft) HOOK_AU((void*)oTimeLeft, (void*)new_Power_GetTimeLeft, old_Power_GetTimeLeft);
+            if (oDur) HOOK_AU((void*)oDur, (void*)new_Power_GetDuration, old_Power_GetDuration);
+        }
+        auto CP = new LoadClass(OBFUSCATE("SYBO.RunnerCore.Powers"), OBFUSCATE("CharacterPower"));
+        if (CP && CP->thisclass) {
+            DWORD oAct = CP->GetMethodOffsetByName(OBFUSCATE("ActivateOrAddPower"), 3);
+            DWORD oActP = CP->GetMethodOffsetByName(OBFUSCATE("ActivatePower"), 1);
+            DWORD oAddP = CP->GetMethodOffsetByName(OBFUSCATE("AddPower"), 3);
+            DWORD oTryP = CP->GetMethodOffsetByName(OBFUSCATE("TryGetPower"), 2);
+            DWORD oIsAct = CP->GetMethodOffsetByName(OBFUSCATE("IsPowerActive"), 1);
+            DWORD oAddC = CP->GetMethodOffsetByName(OBFUSCATE("AddPowerCharge"), 3);
+            if (oAct) HOOK_AU((void*)oAct, (void*)new_ActivateOrAddPower, old_ActivateOrAddPower);
+            if (oActP) HOOK_AU((void*)oActP, (void*)new_ActivatePower, old_ActivatePower);
+            if (oAddP) HOOK_AU((void*)oAddP, (void*)new_AddPower, old_AddPower);
+            if (oTryP) HOOK_AU((void*)oTryP, (void*)new_TryGetPower, old_TryGetPower);
+            if (oIsAct) HOOK_AU((void*)oIsAct, (void*)new_IsPowerActive, old_IsPowerActive);
+            if (oAddC) HOOK_AU((void*)oAddC, (void*)new_AddPowerCharge, old_AddPowerCharge);
+        }
+    }
+
+    // Protection
+    {
+        auto MT = new LoadClass(OBFUSCATE("SYBO.Subway"), OBFUSCATE("MovingTrain"));
+        if (MT && MT->thisclass) {
+            DWORD oUpdate = MT->GetMethodOffsetByName(OBFUSCATE("Update"), 0);
+            DWORD oDisp = MT->GetMethodOffsetByName(OBFUSCATE("Displace"), 0);
+            if (oUpdate) HOOK_AU((void*)oUpdate, (void*)new_MovingTrain_Update, old_MovingTrain_Update);
+            if (oDisp) HOOK_AU((void*)oDisp, (void*)new_Displace, old_Displace);
+        }
+        auto CG = new LoadClass(OBFUSCATE("SYBO.Subway"), OBFUSCATE("ChaserGraphics"));
+        if (CG && CG->thisclass) {
+            DWORD oVisible = CG->GetMethodOffsetByName(OBFUSCATE("SetVisible"), 1);
+            if (oVisible) HOOK_AU((void*)oVisible, (void*)new_ChaserGraphics_SetVisible, old_ChaserGraphics_SetVisible);
+        }
+        auto CB = new LoadClass(OBFUSCATE("SYBO.Subway"), OBFUSCATE("ChaserBehaviour"));
+        if (CB && CB->thisclass) {
+            DWORD oKill = CB->GetMethodOffsetByName(OBFUSCATE("HandleOnCharacterKilled"), 1);
+            DWORD oStumble = CB->GetMethodOffsetByName(OBFUSCATE("HandleOnCharacterStumble"), 1);
+            if (oKill) HOOK_AU((void*)oKill, (void*)new_HandleOnCharacterKilled, old_HandleOnCharacterKilled);
+            if (oStumble) HOOK_AU((void*)oStumble, (void*)new_HandleOnCharacterStumble, old_HandleOnCharacterStumble);
+        }
+    }
+
+    // Revive
+    {
+        auto CS = new LoadClass(OBFUSCATE("SYBO.Subway"), OBFUSCATE("CharacterStumble"));
+        if (CS && CS->thisclass) {
+            DWORD oKill = CS->GetMethodOffsetByName(OBFUSCATE("Kill"), 1); 
+            DWORD oRevive = CS->GetMethodOffsetByName(OBFUSCATE("Revive"), 0);
+            if (oKill) HOOK_AU((void*)oKill, (void*)new_CharacterStumble_Kill, old_CharacterStumble_Kill);
+            if (oRevive) HOOK_AU((void*)oRevive, (void*)new_CharacterStumble_Revive, old_CharacterStumble_Revive);
+        }
+        auto ARP = new LoadClass(OBFUSCATE("SYBO.Subway"), OBFUSCATE("AutoRevivePowerEffect"));
+        if (ARP && ARP->thisclass) {
+            DWORD oAct = ARP->GetMethodOffsetByName(OBFUSCATE("OnActivated"), 0);
+            if (oAct) HOOK_AU((void*)oAct, (void*)new_OnActivated, old_OnActivated);
+        }
+        auto RS = new LoadClass(OBFUSCATE("SYBO.Subway"), OBFUSCATE("ReviveSystem"));
+        if (RS && RS->thisclass) {
+            DWORD oCreate = RS->GetMethodOffsetByName(OBFUSCATE("CreateActiveBonus"), 0);
+            DWORD oTry = RS->GetMethodOffsetByName(OBFUSCATE("TryCreateExtraActiveBonus"), 1);
+            DWORD oSet = RS->GetMethodOffsetByName(OBFUSCATE("SetActiveBonus"), 1);
+            if (oCreate) HOOK_AU((void*)oCreate, (void*)new_CreateActiveBonus, old_CreateActiveBonus);
+            if (oTry) HOOK_AU((void*)oTry, (void*)new_TryCreateExtraActiveBonus, old_TryCreateExtraActiveBonus);
+            if (oSet) HOOK_AU((void*)oSet, (void*)new_SetActiveBonus, old_SetActiveBonus);
+        }
+        auto ARB = new LoadClass(OBFUSCATE("SYBO.Subway"), OBFUSCATE("ActiveReviveBonus"));
+        if (ARB && ARB->thisclass) {
+            DWORD oCtor1 = ARB->GetMethodOffsetByName(OBFUSCATE(".ctor"), 2);
+            DWORD oCtor2 = ARB->GetMethodOffsetByName(OBFUSCATE(".ctor"), 2); // This might conflict, assuming 1 for now
+            if (oCtor1) HOOK_AU((void*)oCtor1, (void*)new_ActiveReviveBonus_ctor, old_ActiveReviveBonus_ctor);
+        }
+    }
+
+    // Camera
+    {
+        auto CCtrl = new LoadClass(OBFUSCATE("SYBO.Subway"), OBFUSCATE("CameraController"));
+        if (CCtrl && CCtrl->thisclass) {
+            DWORD oForce = CCtrl->GetMethodOffsetByName(OBFUSCATE("ForceSetState"), 1);
+            DWORD oOverride = CCtrl->GetMethodOffsetByName(OBFUSCATE("SetOverrideState"), 2);
+            DWORD oSpeedUp = CCtrl->GetMethodOffsetByName(OBFUSCATE("SpeedUpOrSkipSequence"), 0);
+            if (oForce) HOOK_AU((void*)oForce, (void*)new_ForceSetState, old_ForceSetState);
+            if (oOverride) HOOK_AU((void*)oOverride, (void*)new_SetOverrideState, old_SetOverrideState);
+            if (oSpeedUp) HOOK_AU((void*)oSpeedUp, (void*)new_SpeedUpOrSkipSequence, old_SpeedUpOrSkipSequence);
+        }
+        auto CCtx = new LoadClass(OBFUSCATE("SYBO.Subway"), OBFUSCATE("CameraContext"));
+        if (CCtx && CCtx->thisclass) {
+            DWORD oSwitch = CCtx->GetMethodOffsetByName(OBFUSCATE("SwitchState"), 1);
+            DWORD oFov = CCtx->GetMethodOffsetByName(OBFUSCATE("set_FieldOfView"), 1);
+            if (oSwitch) HOOK_AU((void*)oSwitch, (void*)new_SwitchState, old_SwitchState);
+            if (oFov) HOOK_AU((void*)oFov, (void*)new_set_FieldOfView, old_set_FieldOfView);
+        }
+    }
+
+    // Fog & Visuals
+    {
+        auto TC = new LoadClass(OBFUSCATE("SYBO.Subway"), OBFUSCATE("ThemeConfig"));
+        if (TC && TC->thisclass) {
+            DWORD oApply = TC->GetMethodOffsetByName(OBFUSCATE("ApplyRenderSettings"), 0);
+            if (oApply) HOOK_AU((void*)oApply, (void*)new_ApplyRenderSettings, old_ApplyRenderSettings);
+        }
+    }
+
+    // Currency & Data
+    {
+        auto RSD = new LoadClass(OBFUSCATE("SYBO.Subway"), OBFUSCATE("RunSessionData"));
+        if (RSD && RSD->thisclass) {
+            DWORD oKeys = RSD->GetMethodOffsetByName(OBFUSCATE("get_AvailableKeysForUse"), 0);
+            DWORD oConsKeys = RSD->GetMethodOffsetByName(OBFUSCATE("ConsumeKeysAndGetRemaining"), 1);
+            DWORD oConsCoins = RSD->GetMethodOffsetByName(OBFUSCATE("ConsumeCoinsAndGetRemaining"), 1);
+            DWORD oAddCoins = RSD->GetMethodOffsetByName(OBFUSCATE("AddCoins"), 1);
+            DWORD oAddKeys = RSD->GetMethodOffsetByName(OBFUSCATE("AddKeys"), 1);
+            DWORD oAddST = RSD->GetMethodOffsetByName(OBFUSCATE("AddSeasonTokens"), 1);
+            DWORD oAddSP = RSD->GetMethodOffsetByName(OBFUSCATE("AddSeasonPoints"), 1);
+            DWORD oAddCT = RSD->GetMethodOffsetByName(OBFUSCATE("AddCityTourTokens"), 1);
+            DWORD oAddIRT = RSD->GetMethodOffsetByName(OBFUSCATE("AddInRunCollectibleTokens"), 1);
+            DWORD oAddBC = RSD->GetMethodOffsetByName(OBFUSCATE("AddBonusCoins"), 1);
+            DWORD oAddPts = RSD->GetMethodOffsetByName(OBFUSCATE("AddPoints"), 1);
+            
+            if (oKeys) HOOK_AU((void*)oKeys, (void*)new_get_AvailableKeysForUse, old_get_AvailableKeysForUse);
+            if (oConsKeys) HOOK_AU((void*)oConsKeys, (void*)new_ConsumeKeysAndGetRemaining, old_ConsumeKeysAndGetRemaining);
+            if (oConsCoins) HOOK_AU((void*)oConsCoins, (void*)new_ConsumeCoinsAndGetRemaining, old_ConsumeCoinsAndGetRemaining);
+            if (oAddCoins) HOOK_AU((void*)oAddCoins, (void*)new_AddCoins, old_AddCoins);
+            if (oAddKeys) HOOK_AU((void*)oAddKeys, (void*)new_AddKeys, old_AddKeys);
+            if (oAddST) HOOK_AU((void*)oAddST, (void*)new_AddSeasonTokens, old_AddSeasonTokens);
+            if (oAddSP) HOOK_AU((void*)oAddSP, (void*)new_AddSeasonPoints, old_AddSeasonPoints);
+            if (oAddCT) HOOK_AU((void*)oAddCT, (void*)new_AddCityTourTokens, old_AddCityTourTokens);
+            if (oAddIRT) HOOK_AU((void*)oAddIRT, (void*)new_AddInRunCollectibleTokens, old_AddInRunCollectibleTokens);
+            if (oAddBC) HOOK_AU((void*)oAddBC, (void*)new_AddBonusCoins, old_AddBonusCoins);
+            if (oAddPts) HOOK_AU((void*)oAddPts, (void*)new_AddPoints, old_AddPoints);
+        }
+        auto WM = new LoadClass(OBFUSCATE("SYBO.Subway.Core.ProfileData"), OBFUSCATE("WalletModel"));
+        if (WM && WM->thisclass) {
+            DWORD oC = WM->GetMethodOffsetByName(OBFUSCATE("GetCurrency"), 1);
+            if (oC) HOOK_AU((void*)oC, (void*)new_GetCurrency, old_GetCurrency);
+        }
+    }
+
+    // Ads
+    {
+        auto IH = new LoadClass(OBFUSCATE("SYBO.Ads"), OBFUSCATE("InterstitialsHelper"));
+        if (IH && IH->thisclass) {
+            DWORD oInter = IH->GetMethodOffsetByName(OBFUSCATE("TryShowInterstitial"), 1);
+            DWORD oPlace = IH->GetMethodOffsetByName(OBFUSCATE("TryShowPlacement"), 1);
+            if (oInter) HOOK_AU((void*)oInter, (void*)new_TryShowInterstitial, old_TryShowInterstitial);
+            if (oPlace) HOOK_AU((void*)oPlace, (void*)new_TryShowPlacement, old_TryShowPlacement);
+        }
+    }
+
+    // Gameplay Core
     {
         auto SB = new LoadClass(OBFUSCATE("SYBO.Subway"), OBFUSCATE("StumbleBehaviour"));
         if (SB && SB->thisclass) {
@@ -412,39 +682,52 @@ void* hack_thread(void*) {
 jobjectArray GetFeatureList(JNIEnv* env, jobject) {
     jobjectArray ret;
     const char* features[] = {
-        // Main Modes
+        // Mode Presets
         OBFUSCATE("800_ButtonOnOff_Simple Mode"),
         OBFUSCATE("801_ButtonOnOff_Max Mode"),
         OBFUSCATE("802_ButtonOnOff_Ultra Max Mode"),
         OBFUSCATE("803_ButtonOnOff_None (Reset)"),
+        OBFUSCATE("SmallTextView_<b><font color='#3DDB87'>Simple:</font></b> Basic Safety + Coins"),
+        OBFUSCATE("SmallTextView_<b><font color='#3DDB87'>Max:</font></b> Simple + Jump, Power, Score"),
+        OBFUSCATE("SmallTextView_<b><font color='#3DDB87'>Ultra:</font></b> Max + No Collision, Free Shop"),
+        OBFUSCATE("SmallTextView_<b><font color='#FFBB33'>None:</font></b> Reset all features"),
 
+        // Player & Movement
         OBFUSCATE("Category_Player & Movement"),
         OBFUSCATE("200_Toggle_No Gravity"),
         OBFUSCATE("201_SeekBar_Game Speed_1_20"),
         OBFUSCATE("202_SeekBar_Player Speed_1_20"),
 
+        // Powers
         OBFUSCATE("Category_Powers"),
         OBFUSCATE("203_Toggle_Unlimited Power Time"),
 
+        // Teleport
         OBFUSCATE("Category_Teleport"),
         OBFUSCATE("205_SeekBar_Teleport Distance_0_5000"),
 
+        // Protection
         OBFUSCATE("Category_Protection"),
         OBFUSCATE("207_Toggle_Stop Moving Train"),
         OBFUSCATE("208_Toggle_No Guard Chaser"),
 
+        // Revive
         OBFUSCATE("Category_Revive"),
         OBFUSCATE("209_Toggle_Auto Revive"),
 
+        // Camera
         OBFUSCATE("Category_Camera"),
         OBFUSCATE("211_SeekBar_Custom Camera FOV_0_120"),
 
+        // Currency
         OBFUSCATE("Category_Currency"),
         OBFUSCATE("212_Toggle_Unlimited Coins"),
 
+        // Ads
         OBFUSCATE("Category_Ads"),
         OBFUSCATE("214_Toggle_Completely No Ads"),
 
+        // Gameplay
         OBFUSCATE("Category_Gameplay"),
         OBFUSCATE("100_Toggle_No Head-On Collision"),
         OBFUSCATE("101_Toggle_No Side Collision"),
@@ -454,6 +737,7 @@ jobjectArray GetFeatureList(JNIEnv* env, jobject) {
         OBFUSCATE("107_SeekBar_Score Multiplier_0_999"),
         OBFUSCATE("108_Toggle_No Collision Detect"),
 
+        // Chams
         OBFUSCATE("Category_Chams"),
         OBFUSCATE("119_Toggle_Enable Chams"),
         OBFUSCATE("120_Spinner_Chams Mode_Off,Solid Visible,X-Ray,Hybrid Opaque"),
@@ -482,82 +766,64 @@ void Changes(JNIEnv*, jclass, jobject,
              jlong, jboolean boolean, jstring) {
 
     switch (featNum) {
-        // ----- Modes -----
-        case 800: { // Simple
-            g_FrontalImpact.store(boolean);
-            g_SideImpact.store(boolean);
-            g_AutoRevive.store(boolean);
-            g_UnlimitedCoins.store(boolean);
-            g_JumpLimit.store(0);
-            g_JumpHeight.store(0);
-            g_NoCollision.store(false);
-            g_FastLaneChange.store(false);
-            g_ScoreMultiplier.store(0);
-        } break;
-        case 801: { // Max
+        // Modes
+        case 800: {
             if (boolean) {
-                g_FrontalImpact.store(true);
-                g_SideImpact.store(true);
-                g_AutoRevive.store(true);
-                g_UnlimitedCoins.store(true);
-                g_JumpLimit.store(100);
-                g_JumpHeight.store(50);
-                g_FastLaneChange.store(true);
-                g_ScoreMultiplier.store(10);
-                g_NoCollision.store(false);
+                g_FrontalImpact.store(true); g_SideImpact.store(true);
+                g_AutoRevive.store(true); g_UnlimitedCoins.store(true);
+                g_JumpLimit.store(0); g_JumpHeight.store(0);
+                g_PowerDuration.store(0); g_FastLaneChange.store(false);
+                g_ScoreMultiplier.store(0); g_NoCollision.store(false);
             } else {
-                g_JumpLimit.store(0);
-                g_JumpHeight.store(0);
-                g_FastLaneChange.store(false);
+                g_FrontalImpact.store(false); g_SideImpact.store(false);
+                g_AutoRevive.store(false); g_UnlimitedCoins.store(false);
+            }
+        } break;
+        case 801: {
+            if (boolean) {
+                g_FrontalImpact.store(true); g_SideImpact.store(true);
+                g_AutoRevive.store(true); g_FastLaneChange.store(true);
+                g_UnlimitedCoins.store(true); g_JumpLimit.store(100);
+                g_JumpHeight.store(50); g_PowerDuration.store(100);
+                g_ScoreMultiplier.store(10); g_NoCollision.store(false);
+            } else {
+                g_JumpLimit.store(0); g_JumpHeight.store(0);
+                g_PowerDuration.store(0); g_FastLaneChange.store(false);
                 g_ScoreMultiplier.store(0);
             }
         } break;
-        case 802: { // Ultra Max
+        case 802: {
             if (boolean) {
-                g_FrontalImpact.store(true);
-                g_SideImpact.store(true);
-                g_AutoRevive.store(true);
-                g_UnlimitedCoins.store(true);
-                g_JumpLimit.store(999);
-                g_JumpHeight.store(200);
-                g_FastLaneChange.store(true);
-                g_ScoreMultiplier.store(999);
-                g_NoCollision.store(true);
-                g_StopTrain.store(true);
-                g_NoGuardChaser.store(true);
+                g_FrontalImpact.store(true); g_SideImpact.store(true);
+                g_AutoRevive.store(true); g_FastLaneChange.store(true);
+                g_UnlimitedCoins.store(true); g_NoCollision.store(true);
+                g_JumpLimit.store(999); g_JumpHeight.store(200);
+                g_PowerDuration.store(999); g_ScoreMultiplier.store(999);
+                g_StopTrain.store(true); g_NoGuardChaser.store(true);
                 g_NoAds.store(true);
             } else {
-                g_JumpLimit.store(0);
-                g_JumpHeight.store(0);
-                g_FastLaneChange.store(false);
-                g_ScoreMultiplier.store(0);
-                g_NoCollision.store(false);
-                g_StopTrain.store(false);
-                g_NoGuardChaser.store(false);
+                g_FrontalImpact.store(false); g_SideImpact.store(false);
+                g_AutoRevive.store(false); g_FastLaneChange.store(false);
+                g_UnlimitedCoins.store(false); g_NoCollision.store(false);
+                g_JumpLimit.store(0); g_JumpHeight.store(0);
+                g_PowerDuration.store(0); g_ScoreMultiplier.store(0);
+                g_StopTrain.store(false); g_NoGuardChaser.store(false);
                 g_NoAds.store(false);
             }
         } break;
-        case 803: { // Reset
-            g_FrontalImpact.store(false);
-            g_SideImpact.store(false);
-            g_AutoRevive.store(false);
-            g_UnlimitedCoins.store(false);
-            g_JumpLimit.store(0);
-            g_JumpHeight.store(0);
-            g_NoCollision.store(false);
-            g_FastLaneChange.store(false);
-            g_ScoreMultiplier.store(0);
-            g_StopTrain.store(false);
-            g_NoGuardChaser.store(false);
-            g_NoAds.store(false);
-            g_NoGravity.store(false);
-            g_GameSpeed.store(10);
-            g_PlayerSpeed.store(10);
-            g_FOV.store(60);
-            g_TeleportDistance.store(0);
+        case 803: {
+            g_FrontalImpact.store(false); g_SideImpact.store(false);
+            g_AutoRevive.store(false); g_FastLaneChange.store(false);
+            g_UnlimitedCoins.store(false); g_NoCollision.store(false);
+            g_JumpLimit.store(0); g_JumpHeight.store(0);
+            g_PowerDuration.store(0); g_ScoreMultiplier.store(0);
+            g_StopTrain.store(false); g_NoGuardChaser.store(false);
+            g_NoAds.store(false); g_NoGravity.store(false);
+            g_GameSpeed.store(10); g_PlayerSpeed.store(10);
+            g_FOV.store(60); g_TeleportDistance.store(0);
         } break;
 
-        // ----- Individual -----
+        // Individual
         case 100: g_FrontalImpact.store(boolean); break;
         case 101: g_SideImpact.store(boolean); break;
         case 102: g_JumpLimit.store(value); break;
@@ -581,7 +847,7 @@ void Changes(JNIEnv*, jclass, jobject,
         case 212: g_UnlimitedCoins.store(boolean); break;
         case 214: g_NoAds.store(boolean); break;
 
-        // ----- Chams -----
+        // Chams
         case 119: g_ChamsEnabled = boolean; break;
         case 120: chamsint = value; break;
         case 125: setColorPreset(value); break;
