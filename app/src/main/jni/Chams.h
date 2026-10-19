@@ -43,7 +43,6 @@ std::vector<std::string> shaders;
 int chamsint = 3; 
 bool g_ChamsEnabled = false;
 std::string mineShader = "_Displacement"; 
-float g_MaxDistance = 40.0f; 
 
 struct ColorPreset { const char* name; Vec4 visible; Vec4 inWall; };
 static const ColorPreset kColorPresets[] = {
@@ -86,7 +85,6 @@ void (*p_glDisable)(unsigned int)                       = nullptr;
 void (*p_glCullFace)(unsigned int)                      = nullptr;
 void (*p_glDepthFunc)(unsigned int)                     = nullptr; 
 void (*p_glDepthMask)(unsigned char)                    = nullptr;
-void (*p_glGetUniformfv)(unsigned int, int, float*)     = nullptr;
 
 int (*old_glGetUniformLocation)(unsigned int, const char *) = nullptr;
 int new_glGetUniformLocation(unsigned int program, const char *name) {
@@ -99,8 +97,14 @@ int new_glGetUniformLocation(unsigned int program, const char *name) {
     return old_glGetUniformLocation(program, name);
 }
 
+// ★ FIXED: Early Return at the top to prevent freeze when disabled
 void (*old_glDrawElements)(unsigned int, int, unsigned int, const void *) = nullptr;
 void new_glDrawElements(unsigned int mode, int count, unsigned int type, const void *indices) {
+
+    // If Chams is OFF, instantly bypass all GL logic to keep 60 FPS
+    if (!g_ChamsEnabled || chamsint == 0) {
+        return old_glDrawElements(mode, count, type, indices);
+    }
 
     int minCount = (mineShader == "_Displacement") ? 1500 : 3000;
     if (mode != GL_TRIANGLES || count < minCount) {
@@ -117,30 +121,17 @@ void new_glDrawElements(unsigned int mode, int count, unsigned int type, const v
 
     int currProgram = 0;
     p_glGetIntegerv(GL_CURRENT_PROGRAM, &currProgram);
-    int shader = old_glGetUniformLocation(currProgram, mineShader.c_str());
     
-    if (shader == -1 || !g_ChamsEnabled || chamsint == 0) {
-        return old_glDrawElements(mode, count, type, indices);
+    // Cache this to prevent heavy CPU calls per mesh
+    static int lastProgram = -1;
+    static int cachedShaderLoc = -1;
+    if (currProgram != lastProgram) {
+        cachedShaderLoc = old_glGetUniformLocation(currProgram, mineShader.c_str());
+        lastProgram = currProgram;
     }
-
-    if (g_MaxDistance > 0.0f) {
-        int objLoc = old_glGetUniformLocation(currProgram, "hlslcc_mtx4x4unity_ObjectToWorld[3]");
-        int camLoc = old_glGetUniformLocation(currProgram, "_WorldSpaceCameraPos");
-        
-        if (objLoc != -1 && camLoc != -1) {
-            float objVec[4]; 
-            float cam[3];
-            p_glGetUniformfv(currProgram, objLoc, objVec);
-            p_glGetUniformfv(currProgram, camLoc, cam);
-            
-            float dx = objVec[0] - cam[0];
-            float dz = objVec[2] - cam[2];
-            float dist = sqrt(dx*dx + dz*dz);
-
-            if (dist > g_MaxDistance) {
-                return old_glDrawElements(mode, count, type, indices);
-            }
-        }
+    
+    if (cachedShaderLoc == -1) {
+        return old_glDrawElements(mode, count, type, indices);
     }
 
     if (enableRainbow) {
@@ -204,7 +195,6 @@ void RenderHook() {
     
     p_glDepthFunc    = (void (*)(unsigned int))                   dlsym(handle, "glDepthFunc");
     p_glDepthMask    = (void (*)(unsigned char))                  dlsym(handle, "glDepthMask");
-    p_glGetUniformfv = (void (*)(unsigned int, int, float*))      dlsym(handle, "glGetUniformfv");
 
     void *pGet = dlsym(handle, "glGetUniformLocation");
     if (pGet) HOOK_FN(pGet, (void*)new_glGetUniformLocation, (void**)&old_glGetUniformLocation);

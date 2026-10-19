@@ -73,7 +73,6 @@ static void LOGX(const char* level, const char* fmt, ...) {
     fflush(g_LogFile);
     pthread_mutex_unlock(&g_LogMutex);
 }
-
 #define LOGI(...) LOGX("I", __VA_ARGS__)
 #define LOGE(...) LOGX("E", __VA_ARGS__)
 
@@ -101,7 +100,7 @@ static std::atomic<bool> g_UnlimitedCoins     {false};
 static std::atomic<bool> g_NoAds              {false};
 static std::atomic<bool> g_StopTrain          {false};
 static std::atomic<bool> g_NoGuardChaser      {false};
-static std::atomic<int>  g_FOV                {60};
+static std::atomic<int>  g_FOV                {0}; // Default 0 so it doesn't interfere
 static std::atomic<int>  g_TeleportDistance   {0};
 static std::atomic<long long> g_NoCollisionStartMs {0};
 
@@ -118,12 +117,6 @@ static void  (*old_AdjustDuration)(...)             = nullptr;
 static void  (*old_ResetDuration)(...)              = nullptr;
 static float (*old_Power_GetTimeLeft)(...)          = nullptr;
 static float (*old_Power_GetDuration)(...)          = nullptr;
-static void* (*old_ActivateOrAddPower)(...)         = nullptr;
-static bool  (*old_ActivatePower)(...)              = nullptr;
-static void* (*old_AddPower)(...)                   = nullptr;
-static bool  (*old_TryGetPower)(...)                = nullptr;
-static bool  (*old_IsPowerActive)(...)              = nullptr;
-static void  (*old_AddPowerCharge)(...)             = nullptr;
 
 static void  (*old_CharacterMotor_Teleport)(...)    = nullptr;
 static void  (*old_WorldReposition)(...)            = nullptr;
@@ -180,8 +173,6 @@ static bool  (*old_get_detectCollisions)(...)   = nullptr;
 // ================================================================
 //                       HOOK IMPLEMENTATIONS
 // ================================================================
-// ★ FIX: CheckFrontalImpact & CheckSideImpact take a struct (ImpactFrameState).
-// We use void* to safely pass the reference without corrupting registers.
 static bool new_CheckFrontalImpact(void* self, void* impactState) {
     if (!self) return false;
     if (g_FrontalImpact.load()) return false;
@@ -233,24 +224,6 @@ static float new_Power_GetDuration(void* self) {
     if (g_PowerDuration.load() > 0) return 999.0f;
     return old_Power_GetDuration ? old_Power_GetDuration(self) : 0.0f;
 }
-static void* new_ActivateOrAddPower(void* self, int type, int level, int charId) {
-    return old_ActivateOrAddPower ? old_ActivateOrAddPower(self, type, level, charId) : nullptr;
-}
-static bool new_ActivatePower(void* self, int type) {
-    return old_ActivatePower ? old_ActivatePower(self, type) : false;
-}
-static void* new_AddPower(void* self, void* config, int level, int charId) {
-    return old_AddPower ? old_AddPower(self, config, level, charId) : nullptr;
-}
-static bool new_TryGetPower(void* self, int type, void* outPower) {
-    return old_TryGetPower ? old_TryGetPower(self, type, outPower) : false;
-}
-static bool new_IsPowerActive(void* self, int type) {
-    return old_IsPowerActive ? old_IsPowerActive(self, type) : false;
-}
-static void new_AddPowerCharge(void* self, void* info, int type, int amount) {
-    if (old_AddPowerCharge) old_AddPowerCharge(self, info, type, amount);
-}
 
 static void new_CharacterMotor_Teleport(void* self, Vector3 rootPosition) {
     if (g_TeleportDistance.load() > 0 && self) {
@@ -288,7 +261,6 @@ static void new_HandleOnCharacterStumble(void* self, int cause) {
     if (old_HandleOnCharacterStumble) old_HandleOnCharacterStumble(self, cause);
 }
 
-// ★ FIX: CharacterStumble.Kill takes CollisionEventData (struct). Use void* to pass safely.
 static void new_CharacterStumble_Kill(void* self, void* data) {
     if (g_AutoRevive.load() && old_CharacterStumble_Revive) {
         old_CharacterStumble_Revive(self); 
@@ -447,8 +419,6 @@ void* hack_thread(void*) {
             if (oTele) HOOK_AU((void*)oTele, (void*)new_CharacterMotor_Teleport, old_CharacterMotor_Teleport);
             if (oWorld) HOOK_AU((void*)oWorld, (void*)new_WorldReposition, old_WorldReposition);
             if (oBound) HOOK_AU((void*)oBound, (void*)new_set_DisableBoundaryImpact, old_set_DisableBoundaryImpact);
-            
-            // ★ Hooking with void* signature
             if (oFrontal) HOOK_AU((void*)oFrontal, (void*)new_CheckFrontalImpact, old_CheckFrontalImpact);
             if (oSide) HOOK_AU((void*)oSide, (void*)new_CheckSideImpact, old_CheckSideImpact);
             
@@ -504,27 +474,7 @@ void* hack_thread(void*) {
         } else LOGE("  ❌ Power NOT FOUND");
     }
 
-    LOGI("[5/14] Hooking CharacterPower...");
-    {
-        auto CP = new LoadClass(OBFUSCATE("SYBO.RunnerCore.Powers"), OBFUSCATE("CharacterPower"));
-        if (CP && CP->thisclass) {
-            DWORD oAct = CP->GetMethodOffsetByName(OBFUSCATE("ActivateOrAddPower"), 3);
-            DWORD oActP = CP->GetMethodOffsetByName(OBFUSCATE("ActivatePower"), 1);
-            DWORD oAddP = CP->GetMethodOffsetByName(OBFUSCATE("AddPower"), 3);
-            DWORD oTryP = CP->GetMethodOffsetByName(OBFUSCATE("TryGetPower"), 2);
-            DWORD oIsAct = CP->GetMethodOffsetByName(OBFUSCATE("IsPowerActive"), 1);
-            DWORD oAddC = CP->GetMethodOffsetByName(OBFUSCATE("AddPowerCharge"), 3);
-            if (oAct) HOOK_AU((void*)oAct, (void*)new_ActivateOrAddPower, old_ActivateOrAddPower);
-            if (oActP) HOOK_AU((void*)oActP, (void*)new_ActivatePower, old_ActivatePower);
-            if (oAddP) HOOK_AU((void*)oAddP, (void*)new_AddPower, old_AddPower);
-            if (oTryP) HOOK_AU((void*)oTryP, (void*)new_TryGetPower, old_TryGetPower);
-            if (oIsAct) HOOK_AU((void*)oIsAct, (void*)new_IsPowerActive, old_IsPowerActive);
-            if (oAddC) HOOK_AU((void*)oAddC, (void*)new_AddPowerCharge, old_AddPowerCharge);
-            LOGI("  ✅ CharacterPower hooks installed");
-        } else LOGE("  ❌ CharacterPower NOT FOUND");
-    }
-
-    LOGI("[6/14] Hooking MovingTrain...");
+    LOGI("[5/14] Hooking MovingTrain...");
     {
         auto MT = new LoadClass(OBFUSCATE("SYBO.Subway"), OBFUSCATE("MovingTrain"));
         if (MT && MT->thisclass) {
@@ -536,7 +486,7 @@ void* hack_thread(void*) {
         } else LOGE("  ❌ MovingTrain NOT FOUND");
     }
 
-    LOGI("[7/14] Hooking Chaser...");
+    LOGI("[6/14] Hooking Chaser...");
     {
         auto CG = new LoadClass(OBFUSCATE("SYBO.Subway"), OBFUSCATE("ChaserGraphics"));
         if (CG && CG->thisclass) {
@@ -554,7 +504,7 @@ void* hack_thread(void*) {
         } else LOGE("  ❌ ChaserBehaviour NOT FOUND");
     }
 
-    LOGI("[8/14] Hooking Revive System...");
+    LOGI("[7/14] Hooking Revive System...");
     {
         auto CS = new LoadClass(OBFUSCATE("SYBO.Subway"), OBFUSCATE("CharacterStumble"));
         if (CS && CS->thisclass) {
@@ -591,7 +541,7 @@ void* hack_thread(void*) {
         } else LOGE("  ❌ ActiveReviveBonus NOT FOUND");
     }
 
-    LOGI("[9/14] Hooking Camera...");
+    LOGI("[8/14] Hooking Camera...");
     {
         auto CCtrl = new LoadClass(OBFUSCATE("SYBO.Subway"), OBFUSCATE("CameraController"));
         if (CCtrl && CCtrl->thisclass) {
@@ -613,7 +563,7 @@ void* hack_thread(void*) {
         } else LOGE("  ❌ CameraContext NOT FOUND");
     }
 
-    LOGI("[10/14] Hooking Fog...");
+    LOGI("[9/14] Hooking Fog...");
     {
         auto TC = new LoadClass(OBFUSCATE("SYBO.Subway"), OBFUSCATE("ThemeConfig"));
         if (TC && TC->thisclass) {
@@ -623,7 +573,7 @@ void* hack_thread(void*) {
         } else LOGE("  ❌ ThemeConfig NOT FOUND");
     }
 
-    LOGI("[11/14] Hooking Currency...");
+    LOGI("[10/14] Hooking Currency...");
     {
         auto RSD = new LoadClass(OBFUSCATE("SYBO.Subway"), OBFUSCATE("RunSessionData"));
         if (RSD && RSD->thisclass) {
@@ -661,7 +611,7 @@ void* hack_thread(void*) {
         } else LOGE("  ❌ WalletModel NOT FOUND");
     }
 
-    LOGI("[12/14] Hooking Ads...");
+    LOGI("[11/14] Hooking Ads...");
     {
         auto IH = new LoadClass(OBFUSCATE("SYBO.Ads"), OBFUSCATE("InterstitialsHelper"));
         if (IH && IH->thisclass) {
@@ -673,7 +623,7 @@ void* hack_thread(void*) {
         } else LOGE("  ❌ InterstitialsHelper NOT FOUND");
     }
 
-    LOGI("[13/14] Hooking Gameplay Core...");
+    LOGI("[12/14] Hooking Gameplay Core...");
     {
         auto SB = new LoadClass(OBFUSCATE("SYBO.Subway"), OBFUSCATE("StumbleBehaviour"));
         if (SB && SB->thisclass) {
@@ -697,7 +647,7 @@ void* hack_thread(void*) {
         } else LOGE("  ❌ CharacterController NOT FOUND");
     }
 
-    LOGI("[14/14] Hooking Chams...");
+    LOGI("[13/14] Hooking Chams...");
     RenderHook();
     
     LOGI("ALL HOOKS INSTALLED SUCCESSFULLY");
@@ -836,7 +786,7 @@ void Changes(JNIEnv*, jclass, jobject,
             g_StopTrain.store(false); g_NoGuardChaser.store(false);
             g_NoAds.store(false); g_NoGravity.store(false);
             g_GameSpeed.store(10); g_PlayerSpeed.store(10);
-            g_FOV.store(60); g_TeleportDistance.store(0);
+            g_FOV.store(0); g_TeleportDistance.store(0);
         } break;
 
         case 100: g_FrontalImpact.store(boolean); break;
@@ -866,7 +816,7 @@ void Changes(JNIEnv*, jclass, jobject,
         case 120: chamsint = value; break;
         case 125: setColorPreset(value); break;
         case 126: setShaderPreset(value); break;
-        case 127: g_MaxDistance = (float)value; break;
+        case 127: /* disabled distance check */ break;
         case 121: enableRainbow = boolean; break;
         case 122: enableRainbowWall = boolean; break;
         
