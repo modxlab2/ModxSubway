@@ -17,7 +17,6 @@
 #include <unistd.h>
 #include <string>
 #include <vector>
-#include <map>
 #include <android/log.h>
 
 #include <signal.h>
@@ -33,32 +32,32 @@
 #define LOG_TAG "MODXLAB"
 
 // ================================================================
-//  BOOT STEP TRACKER
+//  BOOT STEP
 // ================================================================
 static std::atomic<int> g_BootStep{0};
 static const char* bootStepName(int s) {
     static const char* names[] = {
-        "0-constructor", "1-logging", "2-crash-handler", "3-hack-thread",
-        "4-lib-loaded", "5-module-base", "6-phase1", "7-phase2a",
-        "8-phase2b", "9-phase2c", "10-phase3", "11-render",
-        "12-heartbeat", "13-complete"
+        "0-constructor","1-logging","2-crash-handler","3-hack-thread",
+        "4-lib-loaded","5-module-base","6-phase1","7-phase2a",
+        "8-phase2b","9-phase2c","10-phase3","11-phase4",
+        "12-phase5","13-render","14-complete"
     };
-    return (s >= 0 && s < 14) ? names[s] : "?";
+    return (s >= 0 && s < 15) ? names[s] : "?";
 }
 
 // ================================================================
-//  FILE HANDLES & PATHS
+//  FILE HANDLES
 // ================================================================
-static int              g_LogFd      = -1;
-static int              g_CrashFd    = -1;
-static std::atomic<bool> g_LogReady  {false};
-static std::string      g_LogDir;
-static std::string      g_PackageName;
-static std::string      g_StartupFlagPath;
-static std::string      g_SafeModePath;
+static int               g_LogFd   = -1;
+static int               g_CrashFd = -1;
+static std::atomic<bool> g_LogReady{false};
+static std::string       g_LogDir;
+static std::string       g_PackageName;
+static std::string       g_StartupFlagPath;
+static std::string       g_SafeModePath;
 
 // ================================================================
-//  ASYNC-SAFE STRING HELPERS
+//  ASYNC-SAFE HELPERS
 // ================================================================
 static inline void safeWriteStr(int fd, const char* s) {
     if (fd < 0 || !s) return;
@@ -70,49 +69,59 @@ static inline void safeWriteStr(int fd, const char* s) {
     }
 }
 
+static void safeHexToStr(unsigned long val, char* buf, int bufsz) {
+    if (bufsz < 4) { buf[0] = 0; return; }
+    char tmp[20]; int n = 0;
+    if (val == 0) tmp[n++] = '0';
+    while (val > 0 && n < (int)sizeof(tmp)) {
+        int d = val & 0xF;
+        tmp[n++] = (char)(d < 10 ? '0' + d : 'a' + d - 10);
+        val >>= 4;
+    }
+    int k = 0;
+    if (k < bufsz - 3) { buf[k++] = '0'; buf[k++] = 'x'; }
+    while (n > 0 && k < bufsz - 1) buf[k++] = tmp[--n];
+    buf[k] = 0;
+}
+
 static int safeItoa(long val, char* buf, int bufsz) {
     if (bufsz < 2) return 0;
     char tmp[24]; int n = 0; bool neg = false;
     if (val < 0) { neg = true; val = -val; }
     if (val == 0) tmp[n++] = '0';
-    while (val > 0 && n < (int)sizeof(tmp)) {
-        tmp[n++] = (char)('0' + (val % 10)); val /= 10;
-    }
+    while (val > 0 && n < (int)sizeof(tmp)) { tmp[n++] = (char)('0' + (val % 10)); val /= 10; }
     int k = 0;
     if (neg && k < bufsz - 1) buf[k++] = '-';
     while (n > 0 && k < bufsz - 1) buf[k++] = tmp[--n];
-    buf[k] = '\0';
+    buf[k] = 0;
     return k;
 }
 
 // ================================================================
-//  LOGGER
+//  LOGGER — every line fsync'd (O_SYNC at open time makes write() atomic+durable)
 // ================================================================
 static void logWrite(const char* level, const char* fmt, ...) {
     char buf[1024];
     int pos = 0;
     time_t now = time(nullptr);
     struct tm tmv; localtime_r(&now, &tmv);
-    pos += snprintf(buf + pos, sizeof(buf) - pos, "[%02d:%02d:%02d][%s] ",
-                    tmv.tm_hour, tmv.tm_min, tmv.tm_sec, level);
+    pos += snprintf(buf + pos, sizeof(buf) - pos, "[%02d:%02d:%02d][%s][%lx] ",
+                    tmv.tm_hour, tmv.tm_min, tmv.tm_sec, level,
+                    (unsigned long)pthread_self());
     va_list ap; va_start(ap, fmt);
     pos += vsnprintf(buf + pos, sizeof(buf) - pos, fmt, ap);
     va_end(ap);
     if (pos < (int)sizeof(buf) - 1) { buf[pos++] = '\n'; buf[pos] = '\0'; }
     else { buf[sizeof(buf) - 2] = '\n'; buf[sizeof(buf) - 1] = '\0'; }
-
     __android_log_write(ANDROID_LOG_INFO, LOG_TAG, buf);
-    if (g_LogReady.load() && g_LogFd >= 0) {
-        safeWriteStr(g_LogFd, buf);
-        // NOTE: no fsync — periodic fsync would be added but not on every call
-    }
+    if (g_LogReady.load() && g_LogFd >= 0) safeWriteStr(g_LogFd, buf);
 }
 #define LOGI(...) logWrite("I", __VA_ARGS__)
 #define LOGW(...) logWrite("W", __VA_ARGS__)
 #define LOGE(...) logWrite("E", __VA_ARGS__)
 
 // ================================================================
-//  PACKAGE / PATH HELPERS
+//  PATH HELPERS
 // ================================================================
 static std::string getPackageName() {
     char buf[256] = {0};
@@ -123,13 +132,11 @@ static std::string getPackageName() {
     p = s.find(':'); if (p != std::string::npos) s = s.substr(0, p);
     return s;
 }
-
 static bool ensureDir(const std::string& p) {
     struct stat st;
     if (stat(p.c_str(), &st) == 0) return S_ISDIR(st.st_mode);
     return mkdir(p.c_str(), 0777) == 0;
 }
-
 static std::string findLogDir() {
     g_PackageName = getPackageName();
     std::vector<std::string> cands;
@@ -148,16 +155,12 @@ static std::string findLogDir() {
     return "";
 }
 
-// ================================================================
-//  MODULE BASE PARSING (via /proc/self/maps)
-// ================================================================
 static void* findModuleBase(const char* libName) {
     FILE* f = fopen("/proc/self/maps", "r");
     if (!f) return nullptr;
     char line[512];
     while (fgets(line, sizeof(line), f)) {
         if (strstr(line, libName)) {
-            // Format: "start-end perms offset ... path"
             char* dash = strchr(line, '-');
             if (dash) {
                 char* endptr = nullptr;
@@ -172,12 +175,9 @@ static void* findModuleBase(const char* libName) {
 }
 
 // ================================================================
-//  SIGNAL HANDLERS — with chaining
+//  CRASH HANDLER
 // ================================================================
-struct SavedHandler {
-    struct sigaction prev;
-    bool has_prev;
-};
+struct SavedHandler { struct sigaction prev; bool has_prev; };
 static SavedHandler g_Saved[5];
 static const int g_SigList[5] = { SIGSEGV, SIGABRT, SIGBUS, SIGILL, SIGFPE };
 
@@ -192,52 +192,66 @@ static const char* sigName(int s) {
     }
 }
 
-// Async-signal-safe hex formatter
-static void safeHexToStr(unsigned long val, char* buf, int bufsz) {
-    if (bufsz < 4) { buf[0] = 0; return; }
-    char tmp[20]; int n = 0;
-    if (val == 0) tmp[n++] = '0';
-    while (val > 0 && n < (int)sizeof(tmp)) {
-        int d = val & 0xF;
-        tmp[n++] = (char)(d < 10 ? '0' + d : 'a' + d - 10);
-        val >>= 4;
-    }
-    int k = 0;
-    if (k < bufsz - 3) { buf[k++] = '0'; buf[k++] = 'x'; }
-    while (n > 0 && k < bufsz - 1) buf[k++] = tmp[--n];
-    buf[k] = 0;
-}
-
 static void crashHandler(int sig, siginfo_t* info, void* ctx) {
-    // Restore default immediately to prevent recursion
+    // 1. Restore default FIRST (prevent recursion)
     for (int i = 0; i < 5; i++) signal(g_SigList[i], SIG_DFL);
 
-    // ---- async-safe write to both fds ----
-    char buf[512]; int n = 0;
+    // 2. Force-kill if we hang (async-safe timeout)
+    alarm(3);
 
-    safeWriteStr(g_CrashFd, "\n\n========================================\n");
-    safeWriteStr(g_CrashFd, "NATIVE CRASH DETECTED\n");
-    safeWriteStr(g_CrashFd, "========================================\n");
+    // 3. Write to BOTH fds using async-safe calls only
+    const char* hdr =
+        "\n\n"
+        "========================================\n"
+        "NATIVE CRASH DETECTED\n"
+        "========================================\n";
+    safeWriteStr(g_CrashFd, hdr);
+    safeWriteStr(g_LogFd,   hdr);
 
-    n += snprintf(buf + n, sizeof(buf) - n, "Signal   : %s (%d)\n", sigName(sig), sig);
-    safeWriteStr(g_CrashFd, buf); n = 0;
+    char buf[256];
 
-    n += snprintf(buf + n, sizeof(buf) - n, "Boot step: %s\n", bootStepName(g_BootStep.load()));
-    safeWriteStr(g_CrashFd, buf); n = 0;
+    // Signal
+    safeWriteStr(g_CrashFd, "Signal  : ");
+    safeWriteStr(g_CrashFd, sigName(sig));
+    safeWriteStr(g_CrashFd, "\n");
+    safeWriteStr(g_LogFd, "Signal  : ");
+    safeWriteStr(g_LogFd, sigName(sig));
+    safeWriteStr(g_LogFd, "\n");
 
+    // Boot step
+    safeWriteStr(g_CrashFd, "Step    : ");
+    safeWriteStr(g_CrashFd, bootStepName(g_BootStep.load()));
+    safeWriteStr(g_CrashFd, "\n");
+    safeWriteStr(g_LogFd, "Step    : ");
+    safeWriteStr(g_LogFd, bootStepName(g_BootStep.load()));
+    safeWriteStr(g_LogFd, "\n");
+
+    // Fault address
     if (info) {
         char hex[24]; safeHexToStr((unsigned long)info->si_addr, hex, sizeof(hex));
-        n += snprintf(buf + n, sizeof(buf) - n, "Fault addr: %s\n", hex);
-        safeWriteStr(g_CrashFd, buf); n = 0;
+        safeWriteStr(g_CrashFd, "Fault   : ");
+        safeWriteStr(g_CrashFd, hex);
+        safeWriteStr(g_CrashFd, "\n");
+        safeWriteStr(g_LogFd, "Fault   : ");
+        safeWriteStr(g_LogFd, hex);
+        safeWriteStr(g_LogFd, "\n");
     }
 
-    char pidBuf[16]; safeItoa((long)getpid(), pidBuf, sizeof(pidBuf));
-    n += snprintf(buf + n, sizeof(buf) - n, "PID: %s\n", pidBuf);
-    safeWriteStr(g_CrashFd, buf); n = 0;
+    // TID
+    {
+        char hex[24]; safeHexToStr((unsigned long)pthread_self(), hex, sizeof(hex));
+        safeWriteStr(g_CrashFd, "TID     : ");
+        safeWriteStr(g_CrashFd, hex);
+        safeWriteStr(g_CrashFd, "\n");
+        safeWriteStr(g_LogFd, "TID     : ");
+        safeWriteStr(g_LogFd, hex);
+        safeWriteStr(g_LogFd, "\n");
+    }
 
     if (g_CrashFd >= 0) fsync(g_CrashFd);
+    if (g_LogFd   >= 0) fsync(g_LogFd);
 
-    // ---- try backtrace (may crash — signals already SIG_DFL, so process dies cleanly) ----
+    // 4. Backtrace (may crash — signals are SIG_DFL now so process dies cleanly)
     {
         void* bt[64];
         struct State { void** cur; void** end; } st = { bt, bt + 64 };
@@ -250,37 +264,38 @@ static void crashHandler(int sig, siginfo_t* info, void* ctx) {
 
         int cnt = (int)(st.cur - bt);
         safeWriteStr(g_CrashFd, "--- Backtrace ---\n");
+        safeWriteStr(g_LogFd,   "--- Backtrace ---\n");
         for (int i = 0; i < cnt; i++) {
-            Dl_info dl; n = 0;
+            Dl_info dl; int n = 0;
             if (dladdr(bt[i], &dl) && dl.dli_fname) {
                 unsigned long off = (unsigned long)bt[i] - (unsigned long)dl.dli_fbase;
                 char offHex[24]; safeHexToStr(off, offHex, sizeof(offHex));
-                n += snprintf(buf + n, sizeof(buf) - n,
-                              "  #%02d %s (%s + %s)\n",
-                              i, dl.dli_sname ? dl.dli_sname : "?",
-                              dl.dli_fname, offHex);
+                n = snprintf(buf, sizeof(buf), "  #%02d %s+%s\n",
+                             i, dl.dli_fname, offHex);
             } else {
-                n += snprintf(buf + n, sizeof(buf) - n, "  #%02d %p\n", i, bt[i]);
+                char hex[24]; safeHexToStr((unsigned long)bt[i], hex, sizeof(hex));
+                n = snprintf(buf, sizeof(buf), "  #%02d %s\n", i, hex);
             }
             safeWriteStr(g_CrashFd, buf);
+            safeWriteStr(g_LogFd,   buf);
         }
         if (g_CrashFd >= 0) fsync(g_CrashFd);
+        if (g_LogFd   >= 0) fsync(g_LogFd);
     }
 
-    // ---- chain to previous handler ----
+    // 5. Chain to previous handler
     for (int i = 0; i < 5; i++) {
         if (g_SigList[i] == sig && g_Saved[i].has_prev) {
             struct sigaction& prev = g_Saved[i].prev;
             if (prev.sa_sigaction && prev.sa_sigaction != crashHandler) {
                 prev.sa_sigaction(sig, info, ctx);
                 return;
-            } else if (prev.sa_handler != SIG_DFL && prev.sa_handler != SIG_IGN && prev.sa_handler) {
+            } else if (prev.sa_handler && prev.sa_handler != SIG_DFL && prev.sa_handler != SIG_IGN) {
                 prev.sa_handler(sig);
                 return;
             }
         }
     }
-    // no previous handler → reraise
     raise(sig);
 }
 
@@ -296,7 +311,6 @@ static void installCrashHandler() {
         sa.sa_sigaction = crashHandler;
         sigemptyset(&sa.sa_mask);
 
-        // Save previous
         struct sigaction prev;
         if (sigaction(g_SigList[i], nullptr, &prev) == 0) {
             g_Saved[i].prev = prev;
@@ -304,13 +318,12 @@ static void installCrashHandler() {
         } else {
             g_Saved[i].has_prev = false;
         }
-
         sigaction(g_SigList[i], &sa, nullptr);
     }
 }
 
 // ================================================================
-//  INIT LOGGING
+//  INIT LOGGING — O_SYNC guarantees durability
 // ================================================================
 static void initLogging() {
     g_LogDir = findLogDir();
@@ -320,16 +333,17 @@ static void initLogging() {
     }
     std::string mainPath  = g_LogDir + "/modxlab.log";
     std::string crashPath = g_LogDir + "/modxlab_crash.log";
-    g_LogFd   = open(mainPath.c_str(),  O_WRONLY | O_CREAT | O_APPEND, 0666);
-    g_CrashFd = open(crashPath.c_str(), O_WRONLY | O_CREAT | O_APPEND, 0666);
+
+    // ★ O_SYNC: each write() call is durably flushed to disk
+    g_LogFd   = open(mainPath.c_str(),  O_WRONLY | O_CREAT | O_APPEND | O_SYNC, 0666);
+    g_CrashFd = open(crashPath.c_str(), O_WRONLY | O_CREAT | O_APPEND | O_SYNC, 0666);
 
     if (g_LogFd >= 0) {
         g_LogReady.store(true);
         safeWriteStr(g_LogFd,
             "\n\n========================================\n"
-            "ModXLab Session Start\n"
+            "ModXLab Session Start (O_SYNC mode)\n"
             "========================================\n");
-        fsync(g_LogFd);
     }
     g_StartupFlagPath = g_LogDir + "/startup_pending";
     g_SafeModePath    = g_LogDir + "/SAFE_MODE";
@@ -340,37 +354,62 @@ static void initLogging() {
 }
 
 // ================================================================
-//  CRASH-LOOP / SAFE MODE / SKIP FILES
+//  SAFE-MODE / CRASH-LOOP / SKIP FILES
 // ================================================================
 static bool fileExists(const std::string& p) { return !p.empty() && access(p.c_str(), F_OK) == 0; }
 static bool previousStartupCrashed() { return fileExists(g_StartupFlagPath); }
 static bool safeModeFileExists()     { return fileExists(g_SafeModePath); }
-
 static void markStartupPending() {
     if (g_StartupFlagPath.empty()) return;
     int fd = open(g_StartupFlagPath.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0666);
     if (fd >= 0) { (void)!write(fd, "1", 1); close(fd); }
 }
 static void markStartupComplete() { if (!g_StartupFlagPath.empty()) unlink(g_StartupFlagPath.c_str()); }
-
-// Per-hook skip file
-static bool skipHook(const std::string& hookName) {
+static bool skipHookFile(const std::string& hookName) {
     if (g_LogDir.empty()) return false;
-    std::string p = g_LogDir + "/SKIP_" + hookName;
-    return fileExists(p);
+    return fileExists(g_LogDir + "/SKIP_" + hookName);
 }
 
 // ================================================================
-//  TIME HELPER
+//  ⚠️  PROLOGUE SAFETY CHECK — skip tiny/branchy functions
+// ================================================================
+static const char* checkFunctionSafety(void* addr) {
+    if (!addr) return "null-addr";
+    uint32_t* code = (uint32_t*)addr;
+    uint32_t w0 = code[0], w1 = code[1], w2 = code[2], w3 = code[3];
+
+    // Empty function: RET as first instruction
+    if (w0 == 0xD65F03C0) return "empty-function (RET at insn 0)";
+
+    // Tiny 2-insn function: RET at instruction 1
+    // A64HookFunction needs 16 bytes overwrite → would corrupt next function
+    if (w1 == 0xD65F03C0) return "tiny-function (RET at insn 1, 8-byte func)";
+
+    // Branch instructions in first 4 insns — A64HookFunction must relocate these.
+    // It handles some cases but not all → skip if present.
+    for (int i = 0; i < 4; i++) {
+        uint32_t w = code[i];
+        // B, BL (opcode bits 31-26)
+        if ((w & 0x7C000000) == 0x14000000) return "branch-B in prologue";
+        if ((w & 0x7C000000) == 0x94000000) return "branch-BL in prologue";
+        // CBZ/CBNZ (bits 30-25)
+        if ((w & 0x7E000000) == 0x34000000) return "branch-CBZ/CBNZ in prologue";
+        // TBZ/TBNZ (bits 30-25)
+        if ((w & 0x7E000000) == 0x36000000) return "branch-TBZ/TBNZ in prologue";
+        // BR/BLR (bits 31-25)
+        if ((w & 0xFE000000) == 0xD6000000) return "indirect-branch in prologue";
+    }
+    return nullptr;  // safe
+}
+
+// ================================================================
+//  TIME / FLAGS
 // ================================================================
 static inline long long nowMs() {
     return (long long) std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::steady_clock::now().time_since_epoch()).count();
 }
 
-// ================================================================
-//  FEATURE FLAGS (all default off)
-// ================================================================
 static std::atomic<bool> g_FrontalImpact    {false};
 static std::atomic<bool> g_SideImpact       {false};
 static std::atomic<int>  g_JumpLimit        {0};
@@ -381,53 +420,60 @@ static std::atomic<bool> g_FastLaneChange   {false};
 static std::atomic<int>  g_ScoreMultiplier  {0};
 static std::atomic<bool> g_NoCollision      {false};
 static std::atomic<bool> g_UnlimitedCoins   {false};
-static std::atomic<long long> g_NoCollisionStartMs {0};
+static std::atomic<long long> g_NoCollisionStartMs{0};
 
-static std::atomic<bool> g_UnlimitedShop        {false};
-static std::atomic<bool> g_NoGravity            {false};
-static std::atomic<bool> g_FreezeCharacter      {false};
-static std::atomic<int>  g_CharacterSpeed       {0};
-static std::atomic<int>  g_AirJumpHeight        {0};
-static std::atomic<int>  g_CameraMode           {0};
-static std::atomic<bool> g_NoBoundaryImpact     {false};
-static std::atomic<bool> g_NoStumble            {false};
-static std::atomic<bool> g_HideJetpack          {false};
-static std::atomic<bool> g_HidePogostick        {false};
-static std::atomic<bool> g_HideMagnet           {false};
-static std::atomic<bool> g_HideHoverboard       {false};
-static std::atomic<bool> g_StopTrains           {false};
-static std::atomic<int>  g_AddCoinsBonus        {0};
-static std::atomic<int>  g_AddKeysBonus         {0};
-static std::atomic<int>  g_AddScoreBonus        {0};
-static std::atomic<bool> g_UnlimitedPowerTime   {false};
-static std::atomic<bool> g_UnlimitedJetpackTime {false};
-static std::atomic<bool> g_ReviveReward         {false};
-static std::atomic<bool> g_FreezeCoins          {false};
-static std::atomic<bool> g_FreezeScore          {false};
+static std::atomic<bool> g_UnlimitedShop       {false};
+static std::atomic<bool> g_NoGravity           {false};
+static std::atomic<bool> g_FreezeCharacter     {false};
+static std::atomic<int>  g_CharacterSpeed      {0};
+static std::atomic<int>  g_AirJumpHeight       {0};
+static std::atomic<int>  g_CameraMode          {0};
+static std::atomic<bool> g_NoBoundaryImpact    {false};
+static std::atomic<bool> g_NoStumble           {false};
+static std::atomic<bool> g_HideJetpack         {false};
+static std::atomic<bool> g_HidePogostick       {false};
+static std::atomic<bool> g_HideMagnet          {false};
+static std::atomic<bool> g_HideHoverboard      {false};
+static std::atomic<bool> g_StopTrains          {false};
+static std::atomic<int>  g_AddCoinsBonus       {0};
+static std::atomic<int>  g_AddKeysBonus        {0};
+static std::atomic<int>  g_AddScoreBonus       {0};
+static std::atomic<bool> g_UnlimitedPowerTime  {false};
+static std::atomic<bool> g_UnlimitedJetpackTime{false};
+static std::atomic<bool> g_ReviveReward        {false};
+static std::atomic<bool> g_FreezeCoins         {false};
+static std::atomic<bool> g_FreezeScore         {false};
 
 // ================================================================
-//  HOOK LOGGING MACROS
+//  HOOK MACROS
 // ================================================================
-// First 3 calls log ENTER + EXIT — perfect for pinpointing crash
 #define TRACE_CALL(tag) \
-    static std::atomic<int> _traceCounter{0}; \
-    int _myCall = _traceCounter.fetch_add(1, std::memory_order_relaxed) + 1; \
+    static std::atomic<int> _tc{0}; \
+    int _myCall = _tc.fetch_add(1, std::memory_order_relaxed) + 1; \
     if (_myCall <= 3) LOGI("[ENTER] %s #%d", tag, _myCall)
 
 #define TRACE_EXIT(tag) \
     if (_myCall <= 3) LOGI("[EXIT ] %s #%d", tag, _myCall)
 
-// Hook installation macro with skip-file + prologue logging
+// ★ FULL prologue (16 bytes) + safety check + skip-file
 #define HOOK_CHECK(className, methodName, addr, replace, orig) do { \
-    if (skipHook(methodName)) { \
-        LOGW("[HOOK SKIP-FILE] %s.%s", className, methodName); \
+    if (skipHookFile(methodName)) { \
+        LOGW("[HOOK SKIPFILE] %s.%s", className, methodName); \
         break; \
     } \
-    /* Log prologue bytes for debugging */ \
+    /* Prologue dump (16 bytes) */ \
     { \
-        uint32_t* code = (uint32_t*)(addr); \
-        LOGI("[HOOK TRY]  %s.%s @ %p  [%08x %08x]", \
-             className, methodName, (void*)(addr), code[0], code[1]); \
+        uint32_t* _c = (uint32_t*)(addr); \
+        LOGI("[HOOK TRY]  %s.%s @ %p  [%08x %08x %08x %08x]", \
+             className, methodName, (void*)(addr), _c[0], _c[1], _c[2], _c[3]); \
+    } \
+    /* Safety check */ \
+    { \
+        const char* _why = checkFunctionSafety((void*)(addr)); \
+        if (_why) { \
+            LOGE("[HOOK UNSAFE] %s.%s — %s, skipping", className, methodName, _why); \
+            break; \
+        } \
     } \
     HOOK_AU((void*)(addr), (void*)(replace), (orig)); \
     if ((orig) != nullptr) { \
@@ -480,259 +526,201 @@ static void   (*old_HandleCoinsPickedUp)(void*)               = nullptr;
 static void   (*old_HandlePointsEarned)(void*)                = nullptr;
 
 // ================================================================
-//  HOOK IMPLEMENTATIONS — ALL PASS-THROUGH WHEN DISABLED
+//  HOOK IMPLEMENTATIONS
 // ================================================================
-
-static bool new_CheckFrontalImpact(void* self, void* other) {
+static bool new_CheckFrontalImpact(void* s, void* o) {
     TRACE_CALL("CharacterMotor.CheckFrontalImpact");
-    bool r;
-    if (!self) r = false;
-    else if (g_FrontalImpact.load()) r = false;
-    else r = old_CheckFrontalImpact ? old_CheckFrontalImpact(self, other) : false;
-    TRACE_EXIT("CharacterMotor.CheckFrontalImpact");
-    return r;
+    bool r = (!s || g_FrontalImpact.load()) ? false
+           : (old_CheckFrontalImpact ? old_CheckFrontalImpact(s, o) : false);
+    TRACE_EXIT("CharacterMotor.CheckFrontalImpact"); return r;
 }
-
-static bool new_CheckSideImpact(void* self, void* other) {
+static bool new_CheckSideImpact(void* s, void* o) {
     TRACE_CALL("CharacterMotor.CheckSideImpact");
-    bool r;
-    if (!self) r = false;
-    else if (g_SideImpact.load()) r = false;
-    else r = old_CheckSideImpact ? old_CheckSideImpact(self, other) : false;
-    TRACE_EXIT("CharacterMotor.CheckSideImpact");
-    return r;
+    bool r = (!s || g_SideImpact.load()) ? false
+           : (old_CheckSideImpact ? old_CheckSideImpact(s, o) : false);
+    TRACE_EXIT("CharacterMotor.CheckSideImpact"); return r;
 }
-
-static int new_get_JumpLimit(void* self) {
+static int new_get_JumpLimit(void* s) {
     TRACE_CALL("CharacterMotorAbilities.get_JumpLimit");
     int v = g_JumpLimit.load();
-    int r = (v > 0) ? v : (old_get_JumpLimit ? old_get_JumpLimit(self) : 0);
-    TRACE_EXIT("CharacterMotorAbilities.get_JumpLimit");
-    return r;
+    int r = (v > 0) ? v : (old_get_JumpLimit ? old_get_JumpLimit(s) : 0);
+    TRACE_EXIT("CharacterMotorAbilities.get_JumpLimit"); return r;
 }
-
-static float new_get_JumpHeight(void* self) {
+static float new_get_JumpHeight(void* s) {
     TRACE_CALL("CharacterMotorAbilities.get_JumpHeight");
     int v = g_JumpHeight.load();
-    float r = (v > 0) ? (float)v : (old_get_JumpHeight ? old_get_JumpHeight(self) : 0.0f);
-    TRACE_EXIT("CharacterMotorAbilities.get_JumpHeight");
-    return r;
+    float r = (v > 0) ? (float)v : (old_get_JumpHeight ? old_get_JumpHeight(s) : 0.0f);
+    TRACE_EXIT("CharacterMotorAbilities.get_JumpHeight"); return r;
 }
-
-static float new_get_LaneChangeDuration(void* self) {
+static float new_get_LaneChangeDuration(void* s) {
     TRACE_CALL("CharacterMotorAbilities.get_LaneChangeDuration");
     float r = g_FastLaneChange.load() ? 0.0f
-            : (old_get_LaneChangeDuration ? old_get_LaneChangeDuration(self) : 0.0f);
-    TRACE_EXIT("CharacterMotorAbilities.get_LaneChangeDuration");
-    return r;
+            : (old_get_LaneChangeDuration ? old_get_LaneChangeDuration(s) : 0.0f);
+    TRACE_EXIT("CharacterMotorAbilities.get_LaneChangeDuration"); return r;
 }
-
-static bool new_IsAutoReviveEnabled(void* self) {
+static bool new_IsAutoReviveEnabled(void* s) {
     TRACE_CALL("StumbleBehaviour.IsAutoReviveEnabled");
     bool r = g_AutoRevive.load() ? true
-           : (old_IsAutoReviveEnabled ? old_IsAutoReviveEnabled(self) : false);
-    TRACE_EXIT("StumbleBehaviour.IsAutoReviveEnabled");
-    return r;
+           : (old_IsAutoReviveEnabled ? old_IsAutoReviveEnabled(s) : false);
+    TRACE_EXIT("StumbleBehaviour.IsAutoReviveEnabled"); return r;
 }
-
-static float new_GetDuration(void* self, void* cfg) {
+static float new_GetDuration(void* s, void* cfg) {
     TRACE_CALL("PowerConfig.GetDuration");
     int v = g_PowerDuration.load();
-    float r = (v > 0) ? (float)v : (old_GetDuration ? old_GetDuration(self, cfg) : 0.0f);
-    TRACE_EXIT("PowerConfig.GetDuration");
-    return r;
+    float r = (v > 0) ? (float)v : (old_GetDuration ? old_GetDuration(s, cfg) : 0.0f);
+    TRACE_EXIT("PowerConfig.GetDuration"); return r;
 }
-
-static int new_get_BaseMultiplierSum(void* self) {
+static int new_get_BaseMultiplierSum(void* s) {
     TRACE_CALL("ScoreMultiplierManager.get_BaseMultiplierSum");
     int v = g_ScoreMultiplier.load();
-    int r = (v > 0) ? v : (old_get_BaseMultiplierSum ? old_get_BaseMultiplierSum(self) : 0);
-    TRACE_EXIT("ScoreMultiplierManager.get_BaseMultiplierSum");
-    return r;
+    int r = (v > 0) ? v : (old_get_BaseMultiplierSum ? old_get_BaseMultiplierSum(s) : 0);
+    TRACE_EXIT("ScoreMultiplierManager.get_BaseMultiplierSum"); return r;
 }
-
-static bool new_get_detectCollisions(void* self) {
+static bool new_get_detectCollisions(void* s) {
     TRACE_CALL("CharacterController.get_detectCollisions");
-    bool r;
+    bool r = true;
     if (g_NoCollision.load()) {
-        long long start = g_NoCollisionStartMs.load();
-        r = (start > 0 && (nowMs() - start) < 1000) ? false
-          : (old_get_detectCollisions ? old_get_detectCollisions(self) : true);
-    } else {
-        r = old_get_detectCollisions ? old_get_detectCollisions(self) : true;
-    }
-    TRACE_EXIT("CharacterController.get_detectCollisions");
-    return r;
+        long long st = g_NoCollisionStartMs.load();
+        if (st > 0 && (nowMs() - st) < 1000) r = false;
+        else r = old_get_detectCollisions ? old_get_detectCollisions(s) : true;
+    } else r = old_get_detectCollisions ? old_get_detectCollisions(s) : true;
+    TRACE_EXIT("CharacterController.get_detectCollisions"); return r;
 }
-
-static int new_GetCurrency(void* self, int currencyType) {
+static int new_GetCurrency(void* s, int t) {
     TRACE_CALL("WalletModel.GetCurrency");
     int r = g_UnlimitedCoins.load() ? 99999999
-          : (old_GetCurrency ? old_GetCurrency(self, currencyType) : 0);
-    TRACE_EXIT("WalletModel.GetCurrency");
-    return r;
+          : (old_GetCurrency ? old_GetCurrency(s, t) : 0);
+    TRACE_EXIT("WalletModel.GetCurrency"); return r;
 }
-
-static bool new_get_IsIAP(void* self) {
+static bool new_get_IsIAP(void* s) {
     TRACE_CALL("Currency.get_IsIAP");
     bool r = g_UnlimitedShop.load() ? false
-           : (old_get_IsIAP ? old_get_IsIAP(self) : false);
-    TRACE_EXIT("Currency.get_IsIAP");
-    return r;
+           : (old_get_IsIAP ? old_get_IsIAP(s) : false);
+    TRACE_EXIT("Currency.get_IsIAP"); return r;
 }
-
-static void new_ApplyGravity(void* self) {
+static void new_ApplyGravity(void* s) {
     TRACE_CALL("CharacterMotor.ApplyGravity");
-    if (!g_NoGravity.load() && old_ApplyGravity) old_ApplyGravity(self);
+    if (!g_NoGravity.load() && old_ApplyGravity) old_ApplyGravity(s);
     TRACE_EXIT("CharacterMotor.ApplyGravity");
 }
-
-static float new_get_MinSpeed(void* self) {
+static float new_get_MinSpeed(void* s) {
     TRACE_CALL("CharacterMotorAbilities.get_MinSpeed");
     int v = g_CharacterSpeed.load();
-    float r = (v > 0) ? (float)v : (old_get_MinSpeed ? old_get_MinSpeed(self) : 0.0f);
-    TRACE_EXIT("CharacterMotorAbilities.get_MinSpeed");
-    return r;
+    float r = (v > 0) ? (float)v : (old_get_MinSpeed ? old_get_MinSpeed(s) : 0.0f);
+    TRACE_EXIT("CharacterMotorAbilities.get_MinSpeed"); return r;
 }
-
-static float new_get_MaxSpeed(void* self) {
+static float new_get_MaxSpeed(void* s) {
     TRACE_CALL("CharacterMotorAbilities.get_MaxSpeed");
     int v = g_CharacterSpeed.load();
-    float r = (v > 0) ? (float)v : (old_get_MaxSpeed ? old_get_MaxSpeed(self) : 0.0f);
-    TRACE_EXIT("CharacterMotorAbilities.get_MaxSpeed");
-    return r;
+    float r = (v > 0) ? (float)v : (old_get_MaxSpeed ? old_get_MaxSpeed(s) : 0.0f);
+    TRACE_EXIT("CharacterMotorAbilities.get_MaxSpeed"); return r;
 }
-
-static void new_UpdateMovement(void* self) {
+static void new_UpdateMovement(void* s) {
     TRACE_CALL("CharacterMotor.UpdateMovement");
-    if (!g_FreezeCharacter.load() && old_UpdateMovement) old_UpdateMovement(self);
+    if (!g_FreezeCharacter.load() && old_UpdateMovement) old_UpdateMovement(s);
     TRACE_EXIT("CharacterMotor.UpdateMovement");
 }
-
-static float new_get_AirJumpHeight(void* self) {
+static float new_get_AirJumpHeight(void* s) {
     TRACE_CALL("CharacterMotorAbilities.get_AirJumpHeight");
     int v = g_AirJumpHeight.load();
-    float r = (v > 0) ? (float)v : (old_get_AirJumpHeight ? old_get_AirJumpHeight(self) : 0.0f);
-    TRACE_EXIT("CharacterMotorAbilities.get_AirJumpHeight");
-    return r;
+    float r = (v > 0) ? (float)v : (old_get_AirJumpHeight ? old_get_AirJumpHeight(s) : 0.0f);
+    TRACE_EXIT("CharacterMotorAbilities.get_AirJumpHeight"); return r;
 }
-
-static bool new_CameraApply(void* self, void* context) {
+static bool new_CameraApply(void* s, void* c) {
     TRACE_CALL("CameraGroundedModifier.Apply");
-    int mode = g_CameraMode.load();
-    bool r;
-    if (mode == 1) r = true;
-    else if (mode == 2) r = false;
-    else r = old_CameraApply ? old_CameraApply(self, context) : false;
-    TRACE_EXIT("CameraGroundedModifier.Apply");
-    return r;
+    int m = g_CameraMode.load();
+    bool r = (m == 1) ? true : (m == 2) ? false
+           : (old_CameraApply ? old_CameraApply(s, c) : false);
+    TRACE_EXIT("CameraGroundedModifier.Apply"); return r;
 }
-
-static void new_NotifySideImpact(void* self, int h, int e, void* ent) {
+static void new_NotifySideImpact(void* s, int h, int e, void* ent) {
     TRACE_CALL("CharacterMotor.NotifySideImpact");
-    if (!g_NoBoundaryImpact.load() && old_NotifySideImpact)
-        old_NotifySideImpact(self, h, e, ent);
+    if (!g_NoBoundaryImpact.load() && old_NotifySideImpact) old_NotifySideImpact(s, h, e, ent);
     TRACE_EXIT("CharacterMotor.NotifySideImpact");
 }
-
-static void new_OnStumble(void* self, int dc) {
+static void new_OnStumble(void* s, int dc) {
     TRACE_CALL("RunProgressOrderIndicator.OnStumble");
-    if (!g_NoStumble.load() && old_OnStumble) old_OnStumble(self, dc);
+    if (!g_NoStumble.load() && old_OnStumble) old_OnStumble(s, dc);
     TRACE_EXIT("RunProgressOrderIndicator.OnStumble");
 }
-
-static void new_ShowFlight(void* self, bool show, int mode) {
+static void new_ShowFlight(void* s, bool sh, int m) {
     TRACE_CALL("CharacterPropsController.ShowFlight");
-    if (!g_HideJetpack.load() && old_ShowFlight) old_ShowFlight(self, show, mode);
+    if (!g_HideJetpack.load() && old_ShowFlight) old_ShowFlight(s, sh, m);
     TRACE_EXIT("CharacterPropsController.ShowFlight");
 }
-
-static void new_ShowPogostick(void* self, bool show) {
+static void new_ShowPogostick(void* s, bool sh) {
     TRACE_CALL("CharacterPropsController.ShowPogostick");
-    if (!g_HidePogostick.load() && old_ShowPogostick) old_ShowPogostick(self, show);
+    if (!g_HidePogostick.load() && old_ShowPogostick) old_ShowPogostick(s, sh);
     TRACE_EXIT("CharacterPropsController.ShowPogostick");
 }
-
-static void new_ShowMagnet(void* self, bool show) {
+static void new_ShowMagnet(void* s, bool sh) {
     TRACE_CALL("CharacterPropsController.ShowMagnet");
-    if (!g_HideMagnet.load() && old_ShowMagnet) old_ShowMagnet(self, show);
+    if (!g_HideMagnet.load() && old_ShowMagnet) old_ShowMagnet(s, sh);
     TRACE_EXIT("CharacterPropsController.ShowMagnet");
 }
-
-static void new_ShowHoverboard(void* self, bool rb) {
+static void new_ShowHoverboard(void* s, bool rb) {
     TRACE_CALL("CharacterPropsController.ShowHoverboard");
-    if (!g_HideHoverboard.load() && old_ShowHoverboard) old_ShowHoverboard(self, rb);
+    if (!g_HideHoverboard.load() && old_ShowHoverboard) old_ShowHoverboard(s, rb);
     TRACE_EXIT("CharacterPropsController.ShowHoverboard");
 }
-
-static void new_Displace(void* self) {
+static void new_Displace(void* s) {
     TRACE_CALL("MovingTrain.Displace");
-    if (!g_StopTrains.load() && old_Displace) old_Displace(self);
+    if (!g_StopTrains.load() && old_Displace) old_Displace(s);
     TRACE_EXIT("MovingTrain.Displace");
 }
-
-static void new_Addcoins(void* self, int coins) {
+static void new_Addcoins(void* s, int c) {
     TRACE_CALL("RunSessionData.Addcoins");
     int b = g_AddCoinsBonus.load();
-    if (old_Addcoins) old_Addcoins(self, b > 0 ? coins + b : coins);
+    if (old_Addcoins) old_Addcoins(s, b > 0 ? c + b : c);
     TRACE_EXIT("RunSessionData.Addcoins");
 }
-
-static void new_AddKeys(void* self, int keys) {
+static void new_AddKeys(void* s, int k) {
     TRACE_CALL("RunSessionData.AddKeys");
     int b = g_AddKeysBonus.load();
-    if (old_AddKeys) old_AddKeys(self, b > 0 ? keys + b : keys);
+    if (old_AddKeys) old_AddKeys(s, b > 0 ? k + b : k);
     TRACE_EXIT("RunSessionData.AddKeys");
 }
-
-static void new_AddPoints(void* self, double points) {
+static void new_AddPoints(void* s, double p) {
     TRACE_CALL("RunSessionData.AddPoints");
     int b = g_AddScoreBonus.load();
-    if (old_AddPoints) old_AddPoints(self, b > 0 ? points + (double)b : points);
+    if (old_AddPoints) old_AddPoints(s, b > 0 ? p + (double)b : p);
     TRACE_EXIT("RunSessionData.AddPoints");
 }
-
-static void new_UpdatePowers(void* self) {
+static void new_UpdatePowers(void* s) {
     TRACE_CALL("CharacterPower.UpdatePowers");
-    if (!g_UnlimitedPowerTime.load() && old_UpdatePowers) old_UpdatePowers(self);
+    if (!g_UnlimitedPowerTime.load() && old_UpdatePowers) old_UpdatePowers(s);
     TRACE_EXIT("CharacterPower.UpdatePowers");
 }
-
-static void new_MainUpdatePowers(void* self) {
+static void new_MainUpdatePowers(void* s) {
     TRACE_CALL("MainPowerSystem.UpdatePowers");
-    if (!g_UnlimitedPowerTime.load() && old_MainUpdatePowers) old_MainUpdatePowers(self);
+    if (!g_UnlimitedPowerTime.load() && old_MainUpdatePowers) old_MainUpdatePowers(s);
     TRACE_EXIT("MainPowerSystem.UpdatePowers");
 }
-
-static void new_FinishFlight(void* self) {
+static void new_FinishFlight(void* s) {
     TRACE_CALL("FlyingState.FinishFlight");
-    if (!g_UnlimitedJetpackTime.load() && old_FinishFlight) old_FinishFlight(self);
+    if (!g_UnlimitedJetpackTime.load() && old_FinishFlight) old_FinishFlight(s);
     TRACE_EXIT("FlyingState.FinishFlight");
 }
-
-static void new_OnRevivedWithCurrency(void* self) {
+static void new_OnRevivedWithCurrency(void* s) {
     TRACE_CALL("MainReviveSystem.OnRevivedWithCurrency");
     int n = g_ReviveReward.load() ? 10 : 1;
-    for (int i = 0; i < n; i++) if (old_OnRevivedWithCurrency) old_OnRevivedWithCurrency(self);
+    for (int i = 0; i < n; i++) if (old_OnRevivedWithCurrency) old_OnRevivedWithCurrency(s);
     TRACE_EXIT("MainReviveSystem.OnRevivedWithCurrency");
 }
-
-static void new_MockRevivedWithCurrency(void* self) {
+static void new_MockRevivedWithCurrency(void* s) {
     TRACE_CALL("MockReviveSystem.OnRevivedWithCurrency");
     int n = g_ReviveReward.load() ? 10 : 1;
-    for (int i = 0; i < n; i++) if (old_MockRevivedWithCurrency) old_MockRevivedWithCurrency(self);
+    for (int i = 0; i < n; i++) if (old_MockRevivedWithCurrency) old_MockRevivedWithCurrency(s);
     TRACE_EXIT("MockReviveSystem.OnRevivedWithCurrency");
 }
-
-static void new_HandleCoinsPickedUp(void* self) {
+static void new_HandleCoinsPickedUp(void* s) {
     TRACE_CALL("GameScreenCoinCounter.HandleOnCoinsPickedUp");
-    if (!g_FreezeCoins.load() && old_HandleCoinsPickedUp) old_HandleCoinsPickedUp(self);
+    if (!g_FreezeCoins.load() && old_HandleCoinsPickedUp) old_HandleCoinsPickedUp(s);
     TRACE_EXIT("GameScreenCoinCounter.HandleOnCoinsPickedUp");
 }
-
-static void new_HandlePointsEarned(void* self) {
+static void new_HandlePointsEarned(void* s) {
     TRACE_CALL("GameScreenScoreCounter.HandleOnPointsEarned");
-    if (!g_FreezeScore.load() && old_HandlePointsEarned) old_HandlePointsEarned(self);
+    if (!g_FreezeScore.load() && old_HandlePointsEarned) old_HandlePointsEarned(s);
     TRACE_EXIT("GameScreenScoreCounter.HandleOnPointsEarned");
 }
 
@@ -743,305 +731,276 @@ static void* heartbeat_thread(void*) {
     int n = 0;
     while (true) {
         sleep(60); n++;
-        LOGI("[HEARTBEAT %02d] alive | step=%s | chams=%d",
-             n, bootStepName(g_BootStep.load()), (int)g_ChamsEnabled);
-        if (n == 2) {
+        LOGI("[HEARTBEAT %02d] alive | step=%s", n, bootStepName(g_BootStep.load()));
+        if (n == 1) {
             markStartupComplete();
-            LOGI("[BOOT] Startup marked stable — crash-loop protection cleared");
+            LOGI("[BOOT] Startup marked stable after 60s");
         }
     }
     return nullptr;
 }
 
 // ================================================================
-//  PHASE 1 — PROVEN SAFE HOOKS
+//  PHASE 1
 // ================================================================
 static void installPhase1() {
     LOGI("=== PHASE 1: safe hooks ===");
     {
         auto C = new LoadClass(OBFUSCATE("SYBO.RunnerCore.Character"), OBFUSCATE("CharacterMotor"));
         if (C && C->thisclass) {
-            DWORD oF = C->GetMethodOffsetByName(OBFUSCATE("CheckFrontalImpact"), 1);
-            DWORD oS = C->GetMethodOffsetByName(OBFUSCATE("CheckSideImpact"),    1);
-            if (oF) HOOK_CHECK("CharacterMotor", "CheckFrontalImpact", oF, (void*)new_CheckFrontalImpact, old_CheckFrontalImpact);
-            else    LOG_SKIP("CharacterMotor", "CheckFrontalImpact");
-            if (oS) HOOK_CHECK("CharacterMotor", "CheckSideImpact", oS, (void*)new_CheckSideImpact, old_CheckSideImpact);
-            else    LOG_SKIP("CharacterMotor", "CheckSideImpact");
+            DWORD o = C->GetMethodOffsetByName(OBFUSCATE("CheckFrontalImpact"), 1);
+            if (o) HOOK_CHECK("CharacterMotor","CheckFrontalImpact",o,(void*)new_CheckFrontalImpact,old_CheckFrontalImpact);
+            else LOG_SKIP("CharacterMotor","CheckFrontalImpact");
+            o = C->GetMethodOffsetByName(OBFUSCATE("CheckSideImpact"), 1);
+            if (o) HOOK_CHECK("CharacterMotor","CheckSideImpact",o,(void*)new_CheckSideImpact,old_CheckSideImpact);
+            else LOG_SKIP("CharacterMotor","CheckSideImpact");
         } else LOGE("[CLASS MISS] CharacterMotor");
     }
     {
         auto C = new LoadClass(OBFUSCATE("SYBO.RunnerCore.Character"), OBFUSCATE("CharacterMotorAbilities"));
         if (C && C->thisclass) {
-            DWORD o1 = C->GetMethodOffsetByName(OBFUSCATE("get_JumpLimit"), 0);
-            DWORD o2 = C->GetMethodOffsetByName(OBFUSCATE("get_JumpHeight"), 0);
-            DWORD o3 = C->GetMethodOffsetByName(OBFUSCATE("get_LaneChangeDuration"), 0);
-            if (o1) HOOK_CHECK("CharacterMotorAbilities", "get_JumpLimit", o1, (void*)new_get_JumpLimit, old_get_JumpLimit);
-            else    LOG_SKIP("CharacterMotorAbilities", "get_JumpLimit");
-            if (o2) HOOK_CHECK("CharacterMotorAbilities", "get_JumpHeight", o2, (void*)new_get_JumpHeight, old_get_JumpHeight);
-            else    LOG_SKIP("CharacterMotorAbilities", "get_JumpHeight");
-            if (o3) HOOK_CHECK("CharacterMotorAbilities", "get_LaneChangeDuration", o3, (void*)new_get_LaneChangeDuration, old_get_LaneChangeDuration);
-            else    LOG_SKIP("CharacterMotorAbilities", "get_LaneChangeDuration");
-        } else LOGE("[CLASS MISS] CharacterMotorAbilities");
+            DWORD o1 = C->GetMethodOffsetByName(OBFUSCATE("get_JumpLimit"),0);
+            DWORD o2 = C->GetMethodOffsetByName(OBFUSCATE("get_JumpHeight"),0);
+            DWORD o3 = C->GetMethodOffsetByName(OBFUSCATE("get_LaneChangeDuration"),0);
+            if (o1) HOOK_CHECK("CharacterMotorAbilities","get_JumpLimit",o1,(void*)new_get_JumpLimit,old_get_JumpLimit);
+            else LOG_SKIP("CharacterMotorAbilities","get_JumpLimit");
+            if (o2) HOOK_CHECK("CharacterMotorAbilities","get_JumpHeight",o2,(void*)new_get_JumpHeight,old_get_JumpHeight);
+            else LOG_SKIP("CharacterMotorAbilities","get_JumpHeight");
+            if (o3) HOOK_CHECK("CharacterMotorAbilities","get_LaneChangeDuration",o3,(void*)new_get_LaneChangeDuration,old_get_LaneChangeDuration);
+            else LOG_SKIP("CharacterMotorAbilities","get_LaneChangeDuration");
+        }
     }
     {
         auto C = new LoadClass(OBFUSCATE("SYBO.Subway"), OBFUSCATE("StumbleBehaviour"));
         if (C && C->thisclass) {
-            DWORD o = C->GetMethodOffsetByName(OBFUSCATE("IsAutoReviveEnabled"), 0);
-            if (o) HOOK_CHECK("StumbleBehaviour", "IsAutoReviveEnabled", o, (void*)new_IsAutoReviveEnabled, old_IsAutoReviveEnabled);
-            else   LOG_SKIP("StumbleBehaviour", "IsAutoReviveEnabled");
-        } else LOGE("[CLASS MISS] StumbleBehaviour");
+            DWORD o = C->GetMethodOffsetByName(OBFUSCATE("IsAutoReviveEnabled"),0);
+            if (o) HOOK_CHECK("StumbleBehaviour","IsAutoReviveEnabled",o,(void*)new_IsAutoReviveEnabled,old_IsAutoReviveEnabled);
+            else LOG_SKIP("StumbleBehaviour","IsAutoReviveEnabled");
+        }
     }
     {
         auto C = new LoadClass(OBFUSCATE("SYBO.RunnerCore.Powers"), OBFUSCATE("PowerConfig"));
         if (C && C->thisclass) {
-            DWORD o = C->GetMethodOffsetByName(OBFUSCATE("GetDuration"), 1);
-            if (o) HOOK_CHECK("PowerConfig", "GetDuration", o, (void*)new_GetDuration, old_GetDuration);
-            else   LOG_SKIP("PowerConfig", "GetDuration");
-        } else LOGE("[CLASS MISS] PowerConfig");
+            DWORD o = C->GetMethodOffsetByName(OBFUSCATE("GetDuration"),1);
+            if (o) HOOK_CHECK("PowerConfig","GetDuration",o,(void*)new_GetDuration,old_GetDuration);
+            else LOG_SKIP("PowerConfig","GetDuration");
+        }
     }
     {
         auto C = new LoadClass(OBFUSCATE("SYBO.Subway"), OBFUSCATE("ScoreMultiplierManager"));
         if (C && C->thisclass) {
-            DWORD o = C->GetMethodOffsetByName(OBFUSCATE("get_BaseMultiplierSum"), 0);
-            if (o) HOOK_CHECK("ScoreMultiplierManager", "get_BaseMultiplierSum", o, (void*)new_get_BaseMultiplierSum, old_get_BaseMultiplierSum);
-            else   LOG_SKIP("ScoreMultiplierManager", "get_BaseMultiplierSum");
-        } else LOGE("[CLASS MISS] ScoreMultiplierManager");
+            DWORD o = C->GetMethodOffsetByName(OBFUSCATE("get_BaseMultiplierSum"),0);
+            if (o) HOOK_CHECK("ScoreMultiplierManager","get_BaseMultiplierSum",o,(void*)new_get_BaseMultiplierSum,old_get_BaseMultiplierSum);
+            else LOG_SKIP("ScoreMultiplierManager","get_BaseMultiplierSum");
+        }
     }
     {
         auto C = new LoadClass(OBFUSCATE("UnityEngine"), OBFUSCATE("CharacterController"));
         if (C && C->thisclass) {
-            DWORD o = C->GetMethodOffsetByName(OBFUSCATE("get_detectCollisions"), 0);
-            if (o) HOOK_CHECK("CharacterController", "get_detectCollisions", o, (void*)new_get_detectCollisions, old_get_detectCollisions);
-            else   LOG_SKIP("CharacterController", "get_detectCollisions");
-        } else LOGE("[CLASS MISS] CharacterController");
+            DWORD o = C->GetMethodOffsetByName(OBFUSCATE("get_detectCollisions"),0);
+            if (o) HOOK_CHECK("CharacterController","get_detectCollisions",o,(void*)new_get_detectCollisions,old_get_detectCollisions);
+            else LOG_SKIP("CharacterController","get_detectCollisions");
+        }
     }
     {
         auto C = new LoadClass(OBFUSCATE("SYBO.Subway.Core.ProfileData"), OBFUSCATE("WalletModel"));
         if (C && C->thisclass) {
-            DWORD o = C->GetMethodOffsetByName(OBFUSCATE("GetCurrency"), 1);
-            if (o) HOOK_CHECK("WalletModel", "GetCurrency", o, (void*)new_GetCurrency, old_GetCurrency);
-            else   LOG_SKIP("WalletModel", "GetCurrency");
-        } else LOGE("[CLASS MISS] WalletModel");
+            DWORD o = C->GetMethodOffsetByName(OBFUSCATE("GetCurrency"),1);
+            if (o) HOOK_CHECK("WalletModel","GetCurrency",o,(void*)new_GetCurrency,old_GetCurrency);
+            else LOG_SKIP("WalletModel","GetCurrency");
+        }
     }
     LOGI("=== PHASE 1 complete ===");
 }
 
 // ================================================================
-//  PHASE 2A — Currency-related
+//  PHASE 2 — safe-set part 2
 // ================================================================
-static void installPhase2a() {
-    LOGI("=== PHASE 2A: currency hooks ===");
-    auto C = new LoadClass(OBFUSCATE("SYBO.Subway.Core.CommonData"), OBFUSCATE("Currency"));
-    if (C && C->thisclass) {
-        DWORD o = C->GetMethodOffsetByName(OBFUSCATE("get_IsIAP"), 0);
-        if (o) HOOK_CHECK("Currency", "get_IsIAP", o, (void*)new_get_IsIAP, old_get_IsIAP);
-        else   LOG_SKIP("Currency", "get_IsIAP");
-    } else LOGE("[CLASS MISS] Currency");
-    LOGI("=== PHASE 2A complete ===");
+static void installPhase2() {
+    LOGI("=== PHASE 2: currency + gravity + movement ===");
+    {
+        auto C = new LoadClass(OBFUSCATE("SYBO.Subway.Core.CommonData"), OBFUSCATE("Currency"));
+        if (C && C->thisclass) {
+            DWORD o = C->GetMethodOffsetByName(OBFUSCATE("get_IsIAP"),0);
+            if (o) HOOK_CHECK("Currency","get_IsIAP",o,(void*)new_get_IsIAP,old_get_IsIAP);
+            else LOG_SKIP("Currency","get_IsIAP");
+        }
+    }
+    {
+        auto C = new LoadClass(OBFUSCATE("SYBO.RunnerCore.Character"), OBFUSCATE("CharacterMotor"));
+        if (C && C->thisclass) {
+            DWORD o1 = C->GetMethodOffsetByName(OBFUSCATE("ApplyGravity"),0);
+            DWORD o2 = C->GetMethodOffsetByName(OBFUSCATE("UpdateMovement"),0);
+            DWORD o3 = C->GetMethodOffsetByName(OBFUSCATE("NotifySideImpact"),3);
+            if (o1) HOOK_CHECK("CharacterMotor","ApplyGravity",o1,(void*)new_ApplyGravity,old_ApplyGravity);
+            else LOG_SKIP("CharacterMotor","ApplyGravity");
+            if (o2) HOOK_CHECK("CharacterMotor","UpdateMovement",o2,(void*)new_UpdateMovement,old_UpdateMovement);
+            else LOG_SKIP("CharacterMotor","UpdateMovement");
+            if (o3) HOOK_CHECK("CharacterMotor","NotifySideImpact",o3,(void*)new_NotifySideImpact,old_NotifySideImpact);
+            else LOG_SKIP("CharacterMotor","NotifySideImpact");
+        }
+    }
+    LOGI("=== PHASE 2 complete ===");
 }
 
 // ================================================================
-//  PHASE 2B — CharacterMotor extras
-// ================================================================
-static void installPhase2b() {
-    LOGI("=== PHASE 2B: CharacterMotor extras ===");
-    auto C = new LoadClass(OBFUSCATE("SYBO.RunnerCore.Character"), OBFUSCATE("CharacterMotor"));
-    if (C && C->thisclass) {
-        DWORD o1 = C->GetMethodOffsetByName(OBFUSCATE("ApplyGravity"),     0);
-        DWORD o2 = C->GetMethodOffsetByName(OBFUSCATE("UpdateMovement"),   0);
-        DWORD o3 = C->GetMethodOffsetByName(OBFUSCATE("NotifySideImpact"), 3);
-        if (o1) HOOK_CHECK("CharacterMotor", "ApplyGravity",     o1, (void*)new_ApplyGravity,     old_ApplyGravity);
-        else    LOG_SKIP("CharacterMotor", "ApplyGravity");
-        if (o2) HOOK_CHECK("CharacterMotor", "UpdateMovement",   o2, (void*)new_UpdateMovement,   old_UpdateMovement);
-        else    LOG_SKIP("CharacterMotor", "UpdateMovement");
-        if (o3) HOOK_CHECK("CharacterMotor", "NotifySideImpact", o3, (void*)new_NotifySideImpact, old_NotifySideImpact);
-        else    LOG_SKIP("CharacterMotor", "NotifySideImpact");
-    } else LOGE("[CLASS MISS] CharacterMotor");
-    LOGI("=== PHASE 2B complete ===");
-}
-
-// ================================================================
-//  PHASE 2C — CharacterMotorAbilities extras
-// ================================================================
-static void installPhase2c() {
-    LOGI("=== PHASE 2C: speed / air jump ===");
-    auto C = new LoadClass(OBFUSCATE("SYBO.RunnerCore.Character"), OBFUSCATE("CharacterMotorAbilities"));
-    if (C && C->thisclass) {
-        DWORD o1 = C->GetMethodOffsetByName(OBFUSCATE("get_MinSpeed"),      0);
-        DWORD o2 = C->GetMethodOffsetByName(OBFUSCATE("get_MaxSpeed"),      0);
-        DWORD o3 = C->GetMethodOffsetByName(OBFUSCATE("get_AirJumpHeight"), 0);
-        if (o1) HOOK_CHECK("CharacterMotorAbilities", "get_MinSpeed",      o1, (void*)new_get_MinSpeed,      old_get_MinSpeed);
-        else    LOG_SKIP("CharacterMotorAbilities", "get_MinSpeed");
-        if (o2) HOOK_CHECK("CharacterMotorAbilities", "get_MaxSpeed",      o2, (void*)new_get_MaxSpeed,      old_get_MaxSpeed);
-        else    LOG_SKIP("CharacterMotorAbilities", "get_MaxSpeed");
-        if (o3) HOOK_CHECK("CharacterMotorAbilities", "get_AirJumpHeight", o3, (void*)new_get_AirJumpHeight, old_get_AirJumpHeight);
-        else    LOG_SKIP("CharacterMotorAbilities", "get_AirJumpHeight");
-    } else LOGE("[CLASS MISS] CharacterMotorAbilities");
-    LOGI("=== PHASE 2C complete ===");
-}
-
-// ================================================================
-//  PHASE 3 — Camera / Stumble / CharacterProps (SUSPICIOUS GROUP)
+//  PHASE 3 — camera + stumble
 // ================================================================
 static void installPhase3() {
-    LOGI("=== PHASE 3: camera / props ===");
+    LOGI("=== PHASE 3: camera / stumble ===");
     {
         auto C = new LoadClass(OBFUSCATE("SYBO.Subway"), OBFUSCATE("CameraGroundedModifier"));
         if (C && C->thisclass) {
-            DWORD o = C->GetMethodOffsetByName(OBFUSCATE("Apply"), 1);
-            if (o) HOOK_CHECK("CameraGroundedModifier", "Apply", o, (void*)new_CameraApply, old_CameraApply);
-            else   LOG_SKIP("CameraGroundedModifier", "Apply");
-        } else LOGE("[CLASS MISS] CameraGroundedModifier");
+            DWORD o = C->GetMethodOffsetByName(OBFUSCATE("Apply"),1);
+            if (o) HOOK_CHECK("CameraGroundedModifier","Apply",o,(void*)new_CameraApply,old_CameraApply);
+            else LOG_SKIP("CameraGroundedModifier","Apply");
+        }
     }
     {
         auto C = new LoadClass(OBFUSCATE("SYBO.Subway"), OBFUSCATE("RunProgressOrderIndicator"));
         if (C && C->thisclass) {
-            DWORD o = C->GetMethodOffsetByName(OBFUSCATE("OnStumble"), 1);
-            if (o) HOOK_CHECK("RunProgressOrderIndicator", "OnStumble", o, (void*)new_OnStumble, old_OnStumble);
-            else   LOG_SKIP("RunProgressOrderIndicator", "OnStumble");
-        } else LOGE("[CLASS MISS] RunProgressOrderIndicator");
+            DWORD o = C->GetMethodOffsetByName(OBFUSCATE("OnStumble"),1);
+            if (o) HOOK_CHECK("RunProgressOrderIndicator","OnStumble",o,(void*)new_OnStumble,old_OnStumble);
+            else LOG_SKIP("RunProgressOrderIndicator","OnStumble");
+        }
     }
     LOGI("=== PHASE 3 complete ===");
 }
 
 // ================================================================
-//  PHASE 4 — CharacterPropsController (ONE BY ONE with delays)
+//  PHASE 4 — speed (safety check will skip tiny ones)
 // ================================================================
-static void installPhase4_Props() {
-    LOGI("=== PHASE 4: CharacterPropsController (one-by-one) ===");
-    auto C = new LoadClass(OBFUSCATE("SYBO.Subway"), OBFUSCATE("CharacterPropsController"));
-    if (!C || !C->thisclass) { LOGE("[CLASS MISS] CharacterPropsController"); return; }
-
-    {
-        DWORD o = C->GetMethodOffsetByName(OBFUSCATE("ShowFlight"), 2);
-        if (o) HOOK_CHECK("CharacterPropsController", "ShowFlight", o, (void*)new_ShowFlight, old_ShowFlight);
-        else   LOG_SKIP("CharacterPropsController", "ShowFlight");
-        usleep(300 * 1000);
-    }
-    {
-        DWORD o = C->GetMethodOffsetByName(OBFUSCATE("ShowPogostick"), 1);
-        if (o) HOOK_CHECK("CharacterPropsController", "ShowPogostick", o, (void*)new_ShowPogostick, old_ShowPogostick);
-        else   LOG_SKIP("CharacterPropsController", "ShowPogostick");
-        usleep(300 * 1000);
-    }
-    {
-        DWORD o = C->GetMethodOffsetByName(OBFUSCATE("ShowMagnet"), 1);
-        if (o) HOOK_CHECK("CharacterPropsController", "ShowMagnet", o, (void*)new_ShowMagnet, old_ShowMagnet);
-        else   LOG_SKIP("CharacterPropsController", "ShowMagnet");
-        usleep(300 * 1000);
-    }
-    {
-        DWORD o = C->GetMethodOffsetByName(OBFUSCATE("ShowHoverboard"), 1);
-        if (o) HOOK_CHECK("CharacterPropsController", "ShowHoverboard", o, (void*)new_ShowHoverboard, old_ShowHoverboard);
-        else   LOG_SKIP("CharacterPropsController", "ShowHoverboard");
-        usleep(300 * 1000);
+static void installPhase4() {
+    LOGI("=== PHASE 4: speed / air jump (tiny functions will be skipped) ===");
+    auto C = new LoadClass(OBFUSCATE("SYBO.RunnerCore.Character"), OBFUSCATE("CharacterMotorAbilities"));
+    if (C && C->thisclass) {
+        DWORD o1 = C->GetMethodOffsetByName(OBFUSCATE("get_MinSpeed"),0);
+        DWORD o2 = C->GetMethodOffsetByName(OBFUSCATE("get_MaxSpeed"),0);
+        DWORD o3 = C->GetMethodOffsetByName(OBFUSCATE("get_AirJumpHeight"),0);
+        if (o1) HOOK_CHECK("CharacterMotorAbilities","get_MinSpeed",o1,(void*)new_get_MinSpeed,old_get_MinSpeed);
+        else LOG_SKIP("CharacterMotorAbilities","get_MinSpeed");
+        if (o2) HOOK_CHECK("CharacterMotorAbilities","get_MaxSpeed",o2,(void*)new_get_MaxSpeed,old_get_MaxSpeed);
+        else LOG_SKIP("CharacterMotorAbilities","get_MaxSpeed");
+        if (o3) HOOK_CHECK("CharacterMotorAbilities","get_AirJumpHeight",o3,(void*)new_get_AirJumpHeight,old_get_AirJumpHeight);
+        else LOG_SKIP("CharacterMotorAbilities","get_AirJumpHeight");
     }
     LOGI("=== PHASE 4 complete ===");
 }
 
 // ================================================================
-//  PHASE 5 — Misc
+//  PHASE 5 — character props (one-by-one)
 // ================================================================
 static void installPhase5() {
-    LOGI("=== PHASE 5: misc hooks ===");
+    LOGI("=== PHASE 5: CharacterPropsController ===");
+    auto C = new LoadClass(OBFUSCATE("SYBO.Subway"), OBFUSCATE("CharacterPropsController"));
+    if (!C || !C->thisclass) { LOGE("[CLASS MISS] CharacterPropsController"); return; }
 
-    // MovingTrain.Displace
+    { DWORD o = C->GetMethodOffsetByName(OBFUSCATE("ShowFlight"),2);
+      if (o) HOOK_CHECK("CharacterPropsController","ShowFlight",o,(void*)new_ShowFlight,old_ShowFlight);
+      else LOG_SKIP("CharacterPropsController","ShowFlight");
+      usleep(200*1000); }
+    { DWORD o = C->GetMethodOffsetByName(OBFUSCATE("ShowPogostick"),1);
+      if (o) HOOK_CHECK("CharacterPropsController","ShowPogostick",o,(void*)new_ShowPogostick,old_ShowPogostick);
+      else LOG_SKIP("CharacterPropsController","ShowPogostick");
+      usleep(200*1000); }
+    { DWORD o = C->GetMethodOffsetByName(OBFUSCATE("ShowMagnet"),1);
+      if (o) HOOK_CHECK("CharacterPropsController","ShowMagnet",o,(void*)new_ShowMagnet,old_ShowMagnet);
+      else LOG_SKIP("CharacterPropsController","ShowMagnet");
+      usleep(200*1000); }
+    { DWORD o = C->GetMethodOffsetByName(OBFUSCATE("ShowHoverboard"),1);
+      if (o) HOOK_CHECK("CharacterPropsController","ShowHoverboard",o,(void*)new_ShowHoverboard,old_ShowHoverboard);
+      else LOG_SKIP("CharacterPropsController","ShowHoverboard");
+      usleep(200*1000); }
+    LOGI("=== PHASE 5 complete ===");
+}
+
+// ================================================================
+//  PHASE 6 — misc
+// ================================================================
+static void installPhase6() {
+    LOGI("=== PHASE 6: misc (tiny/empty hooks will be skipped) ===");
     {
         auto C = new LoadClass(OBFUSCATE("SYBO.Subway"), OBFUSCATE("MovingTrain"));
         if (C && C->thisclass) {
-            DWORD o = C->GetMethodOffsetByName(OBFUSCATE("Displace"), 0);
-            if (o) HOOK_CHECK("MovingTrain", "Displace", o, (void*)new_Displace, old_Displace);
-            else   LOG_SKIP("MovingTrain", "Displace");
-        } else LOGE("[CLASS MISS] MovingTrain");
+            DWORD o = C->GetMethodOffsetByName(OBFUSCATE("Displace"),0);
+            if (o) HOOK_CHECK("MovingTrain","Displace",o,(void*)new_Displace,old_Displace);
+            else LOG_SKIP("MovingTrain","Displace");
+        }
     }
-
-    // RunSessionData
     {
         auto C = new LoadClass(OBFUSCATE("SYBO.Subway"), OBFUSCATE("RunSessionData"));
         if (C && C->thisclass) {
-            // Try both Addcoins and AddCoins (case variants)
-            DWORD oC = C->GetMethodOffsetByName(OBFUSCATE("Addcoins"), 1);
-            if (!oC) oC = C->GetMethodOffsetByName(OBFUSCATE("AddCoins"), 1);
-            if (oC) HOOK_CHECK("RunSessionData", "Addcoins", oC, (void*)new_Addcoins, old_Addcoins);
-            else    LOG_SKIP("RunSessionData", "Addcoins");
+            DWORD o = C->GetMethodOffsetByName(OBFUSCATE("Addcoins"),1);
+            if (!o) o = C->GetMethodOffsetByName(OBFUSCATE("AddCoins"),1);
+            if (o) HOOK_CHECK("RunSessionData","Addcoins",o,(void*)new_Addcoins,old_Addcoins);
+            else LOG_SKIP("RunSessionData","Addcoins");
 
-            DWORD oK = C->GetMethodOffsetByName(OBFUSCATE("AddKeys"), 1);
-            if (oK) HOOK_CHECK("RunSessionData", "AddKeys", oK, (void*)new_AddKeys, old_AddKeys);
-            else    LOG_SKIP("RunSessionData", "AddKeys");
+            o = C->GetMethodOffsetByName(OBFUSCATE("AddKeys"),1);
+            if (o) HOOK_CHECK("RunSessionData","AddKeys",o,(void*)new_AddKeys,old_AddKeys);
+            else LOG_SKIP("RunSessionData","AddKeys");
 
-            DWORD oP = C->GetMethodOffsetByName(OBFUSCATE("AddPoints"), 1);
-            if (oP) HOOK_CHECK("RunSessionData", "AddPoints", oP, (void*)new_AddPoints, old_AddPoints);
-            else    LOG_SKIP("RunSessionData", "AddPoints");
-        } else LOGE("[CLASS MISS] RunSessionData");
+            o = C->GetMethodOffsetByName(OBFUSCATE("AddPoints"),1);
+            if (o) HOOK_CHECK("RunSessionData","AddPoints",o,(void*)new_AddPoints,old_AddPoints);
+            else LOG_SKIP("RunSessionData","AddPoints");
+        }
     }
-
-    // CharacterPower.UpdatePowers
     {
         auto C = new LoadClass(OBFUSCATE("SYBO.Subway"), OBFUSCATE("CharacterPower"));
         if (C && C->thisclass) {
-            DWORD o = C->GetMethodOffsetByName(OBFUSCATE("UpdatePowers"), 0);
-            if (o) HOOK_CHECK("CharacterPower", "UpdatePowers", o, (void*)new_UpdatePowers, old_UpdatePowers);
-            else   LOG_SKIP("CharacterPower", "UpdatePowers");
-        } else LOGE("[CLASS MISS] CharacterPower");
+            DWORD o = C->GetMethodOffsetByName(OBFUSCATE("UpdatePowers"),0);
+            if (o) HOOK_CHECK("CharacterPower","UpdatePowers",o,(void*)new_UpdatePowers,old_UpdatePowers);
+            else LOG_SKIP("CharacterPower","UpdatePowers");
+        }
     }
-
-    // MainPowerSystem.UpdatePowers
     {
         auto C = new LoadClass(OBFUSCATE("SYBO.Subway.Systems"), OBFUSCATE("MainPowerSystem"));
         if (C && C->thisclass) {
-            DWORD o = C->GetMethodOffsetByName(OBFUSCATE("UpdatePowers"), 0);
-            if (o) HOOK_CHECK("MainPowerSystem", "UpdatePowers", o, (void*)new_MainUpdatePowers, old_MainUpdatePowers);
-            else   LOG_SKIP("MainPowerSystem", "UpdatePowers");
-        } else LOGE("[CLASS MISS] MainPowerSystem");
+            DWORD o = C->GetMethodOffsetByName(OBFUSCATE("UpdatePowers"),0);
+            if (o) HOOK_CHECK("MainPowerSystem","UpdatePowers",o,(void*)new_MainUpdatePowers,old_MainUpdatePowers);
+            else LOG_SKIP("MainPowerSystem","UpdatePowers");
+        }
     }
-
-    // FlyingState.FinishFlight
     {
         auto C = new LoadClass(OBFUSCATE("SYBO.RunnerCore.Character"), OBFUSCATE("FlyingState"));
         if (C && C->thisclass) {
-            DWORD o = C->GetMethodOffsetByName(OBFUSCATE("FinishFlight"), 0);
-            if (o) HOOK_CHECK("FlyingState", "FinishFlight", o, (void*)new_FinishFlight, old_FinishFlight);
-            else   LOG_SKIP("FlyingState", "FinishFlight");
-        } else LOGE("[CLASS MISS] FlyingState");
+            DWORD o = C->GetMethodOffsetByName(OBFUSCATE("FinishFlight"),0);
+            if (o) HOOK_CHECK("FlyingState","FinishFlight",o,(void*)new_FinishFlight,old_FinishFlight);
+            else LOG_SKIP("FlyingState","FinishFlight");
+        }
     }
-
-    // Revive systems
     {
         auto C = new LoadClass(OBFUSCATE("SYBO.Subway.Systems"), OBFUSCATE("MainReviveSystem"));
         if (C && C->thisclass) {
-            DWORD o = C->GetMethodOffsetByName(OBFUSCATE("OnRevivedWithCurrency"), 0);
-            if (o) HOOK_CHECK("MainReviveSystem", "OnRevivedWithCurrency", o, (void*)new_OnRevivedWithCurrency, old_OnRevivedWithCurrency);
-            else   LOG_SKIP("MainReviveSystem", "OnRevivedWithCurrency");
-        } else LOGE("[CLASS MISS] MainReviveSystem");
+            DWORD o = C->GetMethodOffsetByName(OBFUSCATE("OnRevivedWithCurrency"),0);
+            if (o) HOOK_CHECK("MainReviveSystem","OnRevivedWithCurrency",o,(void*)new_OnRevivedWithCurrency,old_OnRevivedWithCurrency);
+            else LOG_SKIP("MainReviveSystem","OnRevivedWithCurrency");
+        }
     }
     {
         auto C = new LoadClass(OBFUSCATE("SYBO.Subway.Systems.Mocks"), OBFUSCATE("MockReviveSystem"));
         if (C && C->thisclass) {
-            DWORD o = C->GetMethodOffsetByName(OBFUSCATE("OnRevivedWithCurrency"), 0);
-            if (o) HOOK_CHECK("MockReviveSystem", "OnRevivedWithCurrency", o, (void*)new_MockRevivedWithCurrency, old_MockRevivedWithCurrency);
-            else   LOG_SKIP("MockReviveSystem", "OnRevivedWithCurrency");
-        } else LOGE("[CLASS MISS] MockReviveSystem");
+            DWORD o = C->GetMethodOffsetByName(OBFUSCATE("OnRevivedWithCurrency"),0);
+            if (o) HOOK_CHECK("MockReviveSystem","OnRevivedWithCurrency",o,(void*)new_MockRevivedWithCurrency,old_MockRevivedWithCurrency);
+            else LOG_SKIP("MockReviveSystem","OnRevivedWithCurrency");
+        }
     }
-
-    // Game screen counters
     {
         auto C = new LoadClass(OBFUSCATE("SYBO.Subway"), OBFUSCATE("GameScreenCoinCounter"));
         if (C && C->thisclass) {
-            DWORD o = C->GetMethodOffsetByName(OBFUSCATE("HandleOnCoinsPickedUp"), 0);
-            if (o) HOOK_CHECK("GameScreenCoinCounter", "HandleOnCoinsPickedUp", o, (void*)new_HandleCoinsPickedUp, old_HandleCoinsPickedUp);
-            else   LOG_SKIP("GameScreenCoinCounter", "HandleOnCoinsPickedUp");
-        } else LOGE("[CLASS MISS] GameScreenCoinCounter");
+            DWORD o = C->GetMethodOffsetByName(OBFUSCATE("HandleOnCoinsPickedUp"),0);
+            if (o) HOOK_CHECK("GameScreenCoinCounter","HandleOnCoinsPickedUp",o,(void*)new_HandleCoinsPickedUp,old_HandleCoinsPickedUp);
+            else LOG_SKIP("GameScreenCoinCounter","HandleOnCoinsPickedUp");
+        }
     }
     {
         auto C = new LoadClass(OBFUSCATE("SYBO.Subway"), OBFUSCATE("GameScreenScoreCounter"));
         if (C && C->thisclass) {
-            DWORD o = C->GetMethodOffsetByName(OBFUSCATE("HandleOnPointsEarned"), 0);
-            if (o) HOOK_CHECK("GameScreenScoreCounter", "HandleOnPointsEarned", o, (void*)new_HandlePointsEarned, old_HandlePointsEarned);
-            else   LOG_SKIP("GameScreenScoreCounter", "HandleOnPointsEarned");
-        } else LOGE("[CLASS MISS] GameScreenScoreCounter");
+            DWORD o = C->GetMethodOffsetByName(OBFUSCATE("HandleOnPointsEarned"),0);
+            if (o) HOOK_CHECK("GameScreenScoreCounter","HandleOnPointsEarned",o,(void*)new_HandlePointsEarned,old_HandlePointsEarned);
+            else LOG_SKIP("GameScreenScoreCounter","HandleOnPointsEarned");
+        }
     }
-
-    LOGI("=== PHASE 5 complete ===");
+    LOGI("=== PHASE 6 complete ===");
 }
 
 // ================================================================
@@ -1050,53 +1009,42 @@ static void installPhase5() {
 void* hack_thread(void*) {
     g_BootStep = 3;
     LOGI(">>> hack_thread started <<<");
-
     std::string libName = LIB;
     LOGI("Waiting for %s ...", libName.c_str());
     while (!isLibraryLoaded(LIB)) sleep(1);
     sleep(3);
-
     g_BootStep = 4;
     LOGI(">>> library loaded <<<");
 
-    // Module base — try dlsym first, fallback to /proc/self/maps
     g_BootStep = 5;
     {
         void* sym = dlsym(RTLD_DEFAULT, "il2cpp_init");
         if (sym) {
             Dl_info info;
-            if (dladdr(sym, &info)) {
-                LOGI("[MODULE] %s base=%p (via dlsym)", info.dli_fname, info.dli_fbase);
-            }
+            if (dladdr(sym, &info)) LOGI("[MODULE] %s base=%p (dlsym)", info.dli_fname, info.dli_fbase);
         } else {
             void* base = findModuleBase("libil2cpp.so");
-            if (base) LOGI("[MODULE] libil2cpp.so base=%p (via /proc/self/maps)", base);
-            else      LOGW("[MODULE] could not determine base address");
+            if (base) LOGI("[MODULE] libil2cpp.so base=%p (maps)", base);
         }
     }
 
-    // Safe mode / crash loop
     if (safeModeFileExists()) {
-        LOGE("[SAFE MODE] SAFE_MODE file present. Skipping hooks.");
-        LOGE("[SAFE MODE] Delete: %s", g_SafeModePath.c_str());
-        g_BootStep = 13; return nullptr;
+        LOGE("[SAFE MODE] SAFE_MODE file present. Skipping hooks. Delete: %s", g_SafeModePath.c_str());
+        g_BootStep = 14; return nullptr;
     }
     if (previousStartupCrashed()) {
-        LOGE("[SAFE MODE] Previous startup crashed. Skipping hooks.");
-        LOGE("[SAFE MODE] Delete to retry: %s", g_StartupFlagPath.c_str());
+        LOGE("[SAFE MODE] Previous startup crashed. Skipping hooks. Delete: %s", g_StartupFlagPath.c_str());
         unlink(g_StartupFlagPath.c_str());
-        g_BootStep = 13; return nullptr;
+        g_BootStep = 14; return nullptr;
     }
     markStartupPending();
 
-    // ---- multi-phase hook installation ----
-    g_BootStep = 6;  installPhase1();        usleep(500 * 1000);
-    g_BootStep = 7;  installPhase2a();       usleep(300 * 1000);
-    g_BootStep = 8;  installPhase2b();       usleep(300 * 1000);
-    g_BootStep = 9;  installPhase2c();       usleep(300 * 1000);
-    g_BootStep = 10; installPhase3();        usleep(500 * 1000);
-    g_BootStep = 11; installPhase4_Props();  usleep(500 * 1000);
-    g_BootStep = 12; installPhase5();        usleep(300 * 1000);
+    g_BootStep = 6;  installPhase1(); usleep(500*1000);
+    g_BootStep = 7;  installPhase2(); usleep(500*1000);
+    g_BootStep = 8;  installPhase3(); usleep(500*1000);
+    g_BootStep = 9;  installPhase4(); usleep(500*1000);
+    g_BootStep = 10; installPhase5(); usleep(500*1000);
+    g_BootStep = 11; installPhase6(); usleep(500*1000);
 
     g_BootStep = 13;
     LOGI(">>> installing GLES render hooks (chams) <<<");
@@ -1106,9 +1054,9 @@ void* hack_thread(void*) {
     pthread_t hb;
     pthread_create(&hb, nullptr, heartbeat_thread, nullptr);
 
+    g_BootStep = 14;
     LOGI("========================================");
     LOGI("ALL HOOKS INSTALLED — startup complete.");
-    LOGI("Watch [ENTER]/[EXIT] pairs — missing EXIT = crash point.");
     LOGI("========================================");
     return nullptr;
 }
@@ -1171,31 +1119,29 @@ jobjectArray GetFeatureList(JNIEnv* env, jobject) {
         OBFUSCATE("121_Toggle_Rainbow Visible"),
         OBFUSCATE("122_Toggle_Rainbow In-Wall"),
     };
-    int n = (int)(sizeof(features) / sizeof(features[0]));
-    ret = (jobjectArray) env->NewObjectArray(n,
-            env->FindClass(OBFUSCATE("java/lang/String")), env->NewStringUTF(""));
-    for (int i = 0; i < n; i++)
-        env->SetObjectArrayElement(ret, i, env->NewStringUTF(features[i]));
+    int n = (int)(sizeof(features)/sizeof(features[0]));
+    ret = (jobjectArray) env->NewObjectArray(n, env->FindClass(OBFUSCATE("java/lang/String")), env->NewStringUTF(""));
+    for (int i = 0; i < n; i++) env->SetObjectArrayElement(ret, i, env->NewStringUTF(features[i]));
     return ret;
 }
 
 // ================================================================
-//  JNI — CHANGES HANDLER
+//  JNI — CHANGES
 // ================================================================
 void Changes(JNIEnv*, jclass, jobject, jint featNum, jstring, jint value, jlong, jboolean boolean, jstring) {
     switch (featNum) {
-        case 100: g_FrontalImpact.store(boolean);   break;
-        case 101: g_SideImpact.store(boolean);      break;
-        case 102: g_JumpLimit.store(value);         break;
-        case 103: g_JumpHeight.store(value);        break;
-        case 104: g_AutoRevive.store(boolean);      break;
-        case 105: g_PowerDuration.store(value);     break;
-        case 106: g_FastLaneChange.store(boolean);  break;
-        case 107: g_ScoreMultiplier.store(value);   break;
+        case 100: g_FrontalImpact.store(boolean);  break;
+        case 101: g_SideImpact.store(boolean);     break;
+        case 102: g_JumpLimit.store(value);        break;
+        case 103: g_JumpHeight.store(value);       break;
+        case 104: g_AutoRevive.store(boolean);     break;
+        case 105: g_PowerDuration.store(value);    break;
+        case 106: g_FastLaneChange.store(boolean); break;
+        case 107: g_ScoreMultiplier.store(value);  break;
         case 108: {
             g_NoCollision.store(boolean);
             if (boolean) g_NoCollisionStartMs.store(nowMs());
-            else         g_NoCollisionStartMs.store(0);
+            else g_NoCollisionStartMs.store(0);
         } break;
         case 110: g_UnlimitedCoins.store(boolean); break;
         case 130: g_NoGravity.store(boolean);            break;
@@ -1227,61 +1173,46 @@ void Changes(JNIEnv*, jclass, jobject, jint featNum, jstring, jint value, jlong,
         case 121: enableRainbow = boolean;      break;
         case 122: enableRainbowWall = boolean;  break;
         case 800: {
-            if (boolean) {
-                g_FrontalImpact.store(true); g_SideImpact.store(true);
-                g_AutoRevive.store(true); g_UnlimitedCoins.store(true);
-            } else {
-                g_FrontalImpact.store(false); g_SideImpact.store(false);
-                g_AutoRevive.store(false); g_UnlimitedCoins.store(false);
-            }
+            g_FrontalImpact.store(boolean); g_SideImpact.store(boolean);
+            g_AutoRevive.store(boolean);    g_UnlimitedCoins.store(boolean);
         } break;
         case 801: {
-            if (boolean) {
-                g_FrontalImpact.store(true); g_SideImpact.store(true);
-                g_AutoRevive.store(true); g_FastLaneChange.store(true);
-                g_UnlimitedCoins.store(true); g_JumpLimit.store(100);
-                g_JumpHeight.store(50); g_PowerDuration.store(100);
-                g_ScoreMultiplier.store(10);
-            } else {
-                g_JumpLimit.store(0); g_JumpHeight.store(0);
-                g_PowerDuration.store(0); g_FastLaneChange.store(false);
-                g_ScoreMultiplier.store(0);
-            }
+            g_FrontalImpact.store(boolean); g_SideImpact.store(boolean);
+            g_AutoRevive.store(boolean);    g_FastLaneChange.store(boolean);
+            g_UnlimitedCoins.store(boolean);
+            if (boolean) { g_JumpLimit.store(100); g_JumpHeight.store(50);
+                           g_PowerDuration.store(100); g_ScoreMultiplier.store(10); }
+            else { g_JumpLimit.store(0); g_JumpHeight.store(0);
+                   g_PowerDuration.store(0); g_ScoreMultiplier.store(0); }
         } break;
         case 802: {
-            if (boolean) {
-                g_FrontalImpact.store(true); g_SideImpact.store(true);
-                g_AutoRevive.store(true); g_FastLaneChange.store(true);
-                g_UnlimitedCoins.store(true); g_NoCollision.store(true);
-                g_NoCollisionStartMs.store(nowMs());
-                g_JumpLimit.store(999); g_JumpHeight.store(200);
-                g_PowerDuration.store(999); g_ScoreMultiplier.store(999);
-            } else {
-                g_FrontalImpact.store(false); g_SideImpact.store(false);
-                g_AutoRevive.store(false); g_FastLaneChange.store(false);
-                g_UnlimitedCoins.store(false); g_NoCollision.store(false);
-                g_NoCollisionStartMs.store(0); g_JumpLimit.store(0);
-                g_JumpHeight.store(0); g_PowerDuration.store(0);
-                g_ScoreMultiplier.store(0);
-            }
+            g_FrontalImpact.store(boolean); g_SideImpact.store(boolean);
+            g_AutoRevive.store(boolean);    g_FastLaneChange.store(boolean);
+            g_UnlimitedCoins.store(boolean); g_NoCollision.store(boolean);
+            if (boolean) g_NoCollisionStartMs.store(nowMs());
+            else g_NoCollisionStartMs.store(0);
+            if (boolean) { g_JumpLimit.store(999); g_JumpHeight.store(200);
+                           g_PowerDuration.store(999); g_ScoreMultiplier.store(999); }
+            else { g_JumpLimit.store(0); g_JumpHeight.store(0);
+                   g_PowerDuration.store(0); g_ScoreMultiplier.store(0); }
         } break;
         case 803: {
             g_FrontalImpact.store(false); g_SideImpact.store(false);
-            g_AutoRevive.store(false); g_FastLaneChange.store(false);
+            g_AutoRevive.store(false);    g_FastLaneChange.store(false);
             g_UnlimitedCoins.store(false); g_NoCollision.store(false);
             g_NoCollisionStartMs.store(0); g_JumpLimit.store(0);
             g_JumpHeight.store(0); g_PowerDuration.store(0);
             g_ScoreMultiplier.store(0);
-            g_NoGravity.store(false);        g_FreezeCharacter.store(false);
-            g_CharacterSpeed.store(0);       g_AirJumpHeight.store(0);
-            g_CameraMode.store(0);           g_NoBoundaryImpact.store(false);
-            g_NoStumble.store(false);        g_HideJetpack.store(false);
-            g_HidePogostick.store(false);    g_HideMagnet.store(false);
-            g_HideHoverboard.store(false);   g_StopTrains.store(false);
-            g_AddCoinsBonus.store(0);        g_AddKeysBonus.store(0);
-            g_AddScoreBonus.store(0);        g_UnlimitedPowerTime.store(false);
+            g_NoGravity.store(false); g_FreezeCharacter.store(false);
+            g_CharacterSpeed.store(0); g_AirJumpHeight.store(0);
+            g_CameraMode.store(0); g_NoBoundaryImpact.store(false);
+            g_NoStumble.store(false); g_HideJetpack.store(false);
+            g_HidePogostick.store(false); g_HideMagnet.store(false);
+            g_HideHoverboard.store(false); g_StopTrains.store(false);
+            g_AddCoinsBonus.store(0); g_AddKeysBonus.store(0);
+            g_AddScoreBonus.store(0); g_UnlimitedPowerTime.store(false);
             g_UnlimitedJetpackTime.store(false); g_ReviveReward.store(false);
-            g_FreezeCoins.store(false);      g_FreezeScore.store(false);
+            g_FreezeCoins.store(false); g_FreezeScore.store(false);
             g_UnlimitedShop.store(false);
         } break;
         default: break;
@@ -1303,10 +1234,10 @@ extern "C" JNIEXPORT void JNICALL Java_com_android_support_Main_setNativeCrashDi
 __attribute__((constructor))
 void lib_main() {
     g_BootStep = 0;
-    initLogging();            // 1. log first so we see everything
+    initLogging();
     g_BootStep = 2;
-    installCrashHandler();    // 2. crash handler (chains Unity's)
-    LOGI("[BOOT] Crash handler installed (chained)");
+    installCrashHandler();
+    LOGI("[BOOT] Crash handler installed (chained, alarm-protected)");
     pthread_t ptid;
     pthread_create(&ptid, NULL, hack_thread, NULL);
 }
