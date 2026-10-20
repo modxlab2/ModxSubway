@@ -98,7 +98,7 @@ static int safeItoa(long val, char* buf, int bufsz) {
 }
 
 // ================================================================
-//  LOGGER — every line fsync'd (O_SYNC at open time makes write() atomic+durable)
+//  LOGGER
 // ================================================================
 static void logWrite(const char* level, const char* fmt, ...) {
     char buf[1024];
@@ -193,65 +193,36 @@ static const char* sigName(int s) {
 }
 
 static void crashHandler(int sig, siginfo_t* info, void* ctx) {
-    // 1. Restore default FIRST (prevent recursion)
     for (int i = 0; i < 5; i++) signal(g_SigList[i], SIG_DFL);
-
-    // 2. Force-kill if we hang (async-safe timeout)
     alarm(3);
 
-    // 3. Write to BOTH fds using async-safe calls only
-    const char* hdr =
-        "\n\n"
-        "========================================\n"
-        "NATIVE CRASH DETECTED\n"
-        "========================================\n";
+    const char* hdr = "\n\n========================================\nNATIVE CRASH DETECTED\n========================================\n";
     safeWriteStr(g_CrashFd, hdr);
     safeWriteStr(g_LogFd,   hdr);
 
     char buf[256];
 
-    // Signal
-    safeWriteStr(g_CrashFd, "Signal  : ");
-    safeWriteStr(g_CrashFd, sigName(sig));
-    safeWriteStr(g_CrashFd, "\n");
-    safeWriteStr(g_LogFd, "Signal  : ");
-    safeWriteStr(g_LogFd, sigName(sig));
-    safeWriteStr(g_LogFd, "\n");
+    safeWriteStr(g_CrashFd, "Signal  : "); safeWriteStr(g_CrashFd, sigName(sig)); safeWriteStr(g_CrashFd, "\n");
+    safeWriteStr(g_LogFd,   "Signal  : "); safeWriteStr(g_LogFd,   sigName(sig)); safeWriteStr(g_LogFd,   "\n");
 
-    // Boot step
-    safeWriteStr(g_CrashFd, "Step    : ");
-    safeWriteStr(g_CrashFd, bootStepName(g_BootStep.load()));
-    safeWriteStr(g_CrashFd, "\n");
-    safeWriteStr(g_LogFd, "Step    : ");
-    safeWriteStr(g_LogFd, bootStepName(g_BootStep.load()));
-    safeWriteStr(g_LogFd, "\n");
+    safeWriteStr(g_CrashFd, "Step    : "); safeWriteStr(g_CrashFd, bootStepName(g_BootStep.load())); safeWriteStr(g_CrashFd, "\n");
+    safeWriteStr(g_LogFd,   "Step    : "); safeWriteStr(g_LogFd,   bootStepName(g_BootStep.load())); safeWriteStr(g_LogFd,   "\n");
 
-    // Fault address
     if (info) {
         char hex[24]; safeHexToStr((unsigned long)info->si_addr, hex, sizeof(hex));
-        safeWriteStr(g_CrashFd, "Fault   : ");
-        safeWriteStr(g_CrashFd, hex);
-        safeWriteStr(g_CrashFd, "\n");
-        safeWriteStr(g_LogFd, "Fault   : ");
-        safeWriteStr(g_LogFd, hex);
-        safeWriteStr(g_LogFd, "\n");
+        safeWriteStr(g_CrashFd, "Fault   : "); safeWriteStr(g_CrashFd, hex); safeWriteStr(g_CrashFd, "\n");
+        safeWriteStr(g_LogFd,   "Fault   : "); safeWriteStr(g_LogFd,   hex); safeWriteStr(g_LogFd,   "\n");
     }
 
-    // TID
     {
         char hex[24]; safeHexToStr((unsigned long)pthread_self(), hex, sizeof(hex));
-        safeWriteStr(g_CrashFd, "TID     : ");
-        safeWriteStr(g_CrashFd, hex);
-        safeWriteStr(g_CrashFd, "\n");
-        safeWriteStr(g_LogFd, "TID     : ");
-        safeWriteStr(g_LogFd, hex);
-        safeWriteStr(g_LogFd, "\n");
+        safeWriteStr(g_CrashFd, "TID     : "); safeWriteStr(g_CrashFd, hex); safeWriteStr(g_CrashFd, "\n");
+        safeWriteStr(g_LogFd,   "TID     : "); safeWriteStr(g_LogFd,   hex); safeWriteStr(g_LogFd,   "\n");
     }
 
     if (g_CrashFd >= 0) fsync(g_CrashFd);
     if (g_LogFd   >= 0) fsync(g_LogFd);
 
-    // 4. Backtrace (may crash — signals are SIG_DFL now so process dies cleanly)
     {
         void* bt[64];
         struct State { void** cur; void** end; } st = { bt, bt + 64 };
@@ -270,8 +241,7 @@ static void crashHandler(int sig, siginfo_t* info, void* ctx) {
             if (dladdr(bt[i], &dl) && dl.dli_fname) {
                 unsigned long off = (unsigned long)bt[i] - (unsigned long)dl.dli_fbase;
                 char offHex[24]; safeHexToStr(off, offHex, sizeof(offHex));
-                n = snprintf(buf, sizeof(buf), "  #%02d %s+%s\n",
-                             i, dl.dli_fname, offHex);
+                n = snprintf(buf, sizeof(buf), "  #%02d %s+%s\n", i, dl.dli_fname, offHex);
             } else {
                 char hex[24]; safeHexToStr((unsigned long)bt[i], hex, sizeof(hex));
                 n = snprintf(buf, sizeof(buf), "  #%02d %s\n", i, hex);
@@ -283,7 +253,6 @@ static void crashHandler(int sig, siginfo_t* info, void* ctx) {
         if (g_LogFd   >= 0) fsync(g_LogFd);
     }
 
-    // 5. Chain to previous handler
     for (int i = 0; i < 5; i++) {
         if (g_SigList[i] == sig && g_Saved[i].has_prev) {
             struct sigaction& prev = g_Saved[i].prev;
@@ -323,7 +292,7 @@ static void installCrashHandler() {
 }
 
 // ================================================================
-//  INIT LOGGING — O_SYNC guarantees durability
+//  INIT LOGGING
 // ================================================================
 static void initLogging() {
     g_LogDir = findLogDir();
@@ -334,7 +303,6 @@ static void initLogging() {
     std::string mainPath  = g_LogDir + "/modxlab.log";
     std::string crashPath = g_LogDir + "/modxlab_crash.log";
 
-    // ★ O_SYNC: each write() call is durably flushed to disk
     g_LogFd   = open(mainPath.c_str(),  O_WRONLY | O_CREAT | O_APPEND | O_SYNC, 0666);
     g_CrashFd = open(crashPath.c_str(), O_WRONLY | O_CREAT | O_APPEND | O_SYNC, 0666);
 
@@ -354,7 +322,7 @@ static void initLogging() {
 }
 
 // ================================================================
-//  SAFE-MODE / CRASH-LOOP / SKIP FILES
+//  SAFE MODE FILES
 // ================================================================
 static bool fileExists(const std::string& p) { return !p.empty() && access(p.c_str(), F_OK) == 0; }
 static bool previousStartupCrashed() { return fileExists(g_StartupFlagPath); }
@@ -371,35 +339,33 @@ static bool skipHookFile(const std::string& hookName) {
 }
 
 // ================================================================
-//  ⚠️  PROLOGUE SAFETY CHECK — skip tiny/branchy functions
+//  ⚠️  PROLOGUE SAFETY CHECK
+//  — Now correctly allows RET (D65F...) so tiny leaf functions
+//    like Currency.get_IsIAP hook properly.
 // ================================================================
 static const char* checkFunctionSafety(void* addr) {
     if (!addr) return "null-addr";
     uint32_t* code = (uint32_t*)addr;
     uint32_t w0 = code[0], w1 = code[1], w2 = code[2], w3 = code[3];
 
-    // Empty function: RET as first instruction
     if (w0 == 0xD65F03C0) return "empty-function (RET at insn 0)";
+    if (w1 == 0xD65F03C0) return "tiny-function (8-byte)";
 
-    // Tiny 2-insn function: RET at instruction 1
-    // A64HookFunction needs 16 bytes overwrite → would corrupt next function
-    if (w1 == 0xD65F03C0) return "tiny-function (RET at insn 1, 8-byte func)";
-
-    // Branch instructions in first 4 insns — A64HookFunction must relocate these.
-    // It handles some cases but not all → skip if present.
+    // Only BLOCK genuine indirect branches — NOT RET / ERET.
     for (int i = 0; i < 4; i++) {
         uint32_t w = code[i];
-        // B, BL (opcode bits 31-26)
-        if ((w & 0x7C000000) == 0x14000000) return "branch-B in prologue";
-        if ((w & 0x7C000000) == 0x94000000) return "branch-BL in prologue";
-        // CBZ/CBNZ (bits 30-25)
-        if ((w & 0x7E000000) == 0x34000000) return "branch-CBZ/CBNZ in prologue";
-        // TBZ/TBNZ (bits 30-25)
-        if ((w & 0x7E000000) == 0x36000000) return "branch-TBZ/TBNZ in prologue";
-        // BR/BLR (bits 31-25)
-        if ((w & 0xFE000000) == 0xD6000000) return "indirect-branch in prologue";
+        if ((w & 0x7C000000) == 0x14000000) return "B in prologue";
+        if ((w & 0x7C000000) == 0x94000000) return "BL in prologue";
+        // BR (any Rn) — D61F....
+        if ((w & 0xFFFF0000) == 0xD61F0000) return "BR in prologue";
+        // BLR (any Rn) — D63F....
+        if ((w & 0xFFFF0000) == 0xD63F0000) return "BLR in prologue";
+        // CBZ / CBNZ
+        if ((w & 0x7E000000) == 0x34000000) return "CBZ/CBNZ in prologue";
+        // TBZ / TBNZ
+        if ((w & 0x7E000000) == 0x36000000) return "TBZ/TBNZ in prologue";
     }
-    return nullptr;  // safe
+    return nullptr;
 }
 
 // ================================================================
@@ -411,7 +377,7 @@ static inline long long nowMs() {
 }
 
 static std::atomic<bool> g_FrontalImpact    {false};
-static std::atomic<bool> g_SideImpact       {false};
+static std::atomic<bool> g_SideImpact       {false};   // ← also gated by feature 100
 static std::atomic<int>  g_JumpLimit        {0};
 static std::atomic<int>  g_JumpHeight       {0};
 static std::atomic<bool> g_AutoRevive       {false};
@@ -455,19 +421,16 @@ static std::atomic<bool> g_FreezeScore         {false};
 #define TRACE_EXIT(tag) \
     if (_myCall <= 3) LOGI("[EXIT ] %s #%d", tag, _myCall)
 
-// ★ FULL prologue (16 bytes) + safety check + skip-file
 #define HOOK_CHECK(className, methodName, addr, replace, orig) do { \
     if (skipHookFile(methodName)) { \
         LOGW("[HOOK SKIPFILE] %s.%s", className, methodName); \
         break; \
     } \
-    /* Prologue dump (16 bytes) */ \
     { \
         uint32_t* _c = (uint32_t*)(addr); \
         LOGI("[HOOK TRY]  %s.%s @ %p  [%08x %08x %08x %08x]", \
              className, methodName, (void*)(addr), _c[0], _c[1], _c[2], _c[3]); \
     } \
-    /* Safety check */ \
     { \
         const char* _why = checkFunctionSafety((void*)(addr)); \
         if (_why) { \
@@ -508,10 +471,7 @@ static void   (*old_UpdateMovement)(void*)                    = nullptr;
 static float  (*old_get_AirJumpHeight)(void*)                 = nullptr;
 static bool   (*old_CameraApply)(void*, void*)                = nullptr;
 
-// ★ FIXED: NotifySideImpact(HorizontalImpactType, EntityType, IEntityProvider)
-//   EntityType is a CLASS (KeyScriptableObject) → 64-bit pointer, NOT int.
-//   The previous `int e` truncated the pointer, causing a SIGSEGV on first
-//   dereference inside the original function.
+// NotifySideImpact(HorizontalImpactType, EntityType*, IEntityProvider)  — EntityType is a class → void*
 static void   (*old_NotifySideImpact)(void*, int, void*, void*) = nullptr;
 
 static void   (*old_OnStumble)(void*, int)                    = nullptr;
@@ -639,8 +599,6 @@ static bool new_CameraApply(void* s, void* c) {
            : (old_CameraApply ? old_CameraApply(s, c) : false);
     TRACE_EXIT("CameraGroundedModifier.Apply"); return r;
 }
-
-// ★ FIXED signature: 2nd arg is EntityType* (class), not int
 static void new_NotifySideImpact(void* s, int h, void* e, void* ent) {
     TRACE_CALL("CharacterMotor.NotifySideImpact");
     if (!g_NoBoundaryImpact.load() && old_NotifySideImpact) {
@@ -648,7 +606,6 @@ static void new_NotifySideImpact(void* s, int h, void* e, void* ent) {
     }
     TRACE_EXIT("CharacterMotor.NotifySideImpact");
 }
-
 static void new_OnStumble(void* s, int dc) {
     TRACE_CALL("RunProgressOrderIndicator.OnStumble");
     if (!g_NoStumble.load() && old_OnStumble) old_OnStumble(s, dc);
@@ -755,7 +712,7 @@ static void* heartbeat_thread(void*) {
 //  PHASE 1
 // ================================================================
 static void installPhase1() {
-    LOGI("=== PHASE 1: safe hooks ===");
+    LOGI("=== PHASE 1: core hooks ===");
     {
         auto C = new LoadClass(OBFUSCATE("SYBO.RunnerCore.Character"), OBFUSCATE("CharacterMotor"));
         if (C && C->thisclass) {
@@ -825,11 +782,12 @@ static void installPhase1() {
 }
 
 // ================================================================
-//  PHASE 2 — safe-set part 2
+//  PHASE 2
 // ================================================================
 static void installPhase2() {
-    LOGI("=== PHASE 2: currency + gravity + movement ===");
+    LOGI("=== PHASE 2: currency / gravity / movement ===");
     {
+        // ★ The fix for RET in the safety check makes this hook now succeed.
         auto C = new LoadClass(OBFUSCATE("SYBO.Subway.Core.CommonData"), OBFUSCATE("Currency"));
         if (C && C->thisclass) {
             DWORD o = C->GetMethodOffsetByName(OBFUSCATE("get_IsIAP"),0);
@@ -855,10 +813,10 @@ static void installPhase2() {
 }
 
 // ================================================================
-//  PHASE 3 — camera + stumble
+//  PHASE 3
 // ================================================================
 static void installPhase3() {
-    LOGI("=== PHASE 3: camera / stumble ===");
+    LOGI("=== PHASE 3: camera / rank indicator ===");
     {
         auto C = new LoadClass(OBFUSCATE("SYBO.Subway"), OBFUSCATE("CameraGroundedModifier"));
         if (C && C->thisclass) {
@@ -879,10 +837,10 @@ static void installPhase3() {
 }
 
 // ================================================================
-//  PHASE 4 — speed (safety check will skip tiny ones)
+//  PHASE 4
 // ================================================================
 static void installPhase4() {
-    LOGI("=== PHASE 4: speed / air jump (tiny functions will be skipped) ===");
+    LOGI("=== PHASE 4: speed / air jump ===");
     auto C = new LoadClass(OBFUSCATE("SYBO.RunnerCore.Character"), OBFUSCATE("CharacterMotorAbilities"));
     if (C && C->thisclass) {
         DWORD o1 = C->GetMethodOffsetByName(OBFUSCATE("get_MinSpeed"),0);
@@ -899,10 +857,10 @@ static void installPhase4() {
 }
 
 // ================================================================
-//  PHASE 5 — character props (one-by-one)
+//  PHASE 5
 // ================================================================
 static void installPhase5() {
-    LOGI("=== PHASE 5: CharacterPropsController ===");
+    LOGI("=== PHASE 5: character props ===");
     auto C = new LoadClass(OBFUSCATE("SYBO.Subway"), OBFUSCATE("CharacterPropsController"));
     if (!C || !C->thisclass) { LOGE("[CLASS MISS] CharacterPropsController"); return; }
 
@@ -926,10 +884,10 @@ static void installPhase5() {
 }
 
 // ================================================================
-//  PHASE 6 — misc
+//  PHASE 6
 // ================================================================
 static void installPhase6() {
-    LOGI("=== PHASE 6: misc (tiny/empty hooks will be skipped) ===");
+    LOGI("=== PHASE 6: misc ===");
     {
         auto C = new LoadClass(OBFUSCATE("SYBO.Subway"), OBFUSCATE("MovingTrain"));
         if (C && C->thisclass) {
@@ -1073,54 +1031,52 @@ void* hack_thread(void*) {
 }
 
 // ================================================================
-//  JNI — FEATURE LIST
+//  JNI — FEATURE LIST  (user-friendly names + combined collision toggle)
 // ================================================================
 jobjectArray GetFeatureList(JNIEnv* env, jobject) {
     jobjectArray ret;
     const char* features[] = {
-        OBFUSCATE("800_ButtonOnOff_Simple Mode"),
-        OBFUSCATE("801_ButtonOnOff_Max Mode"),
-        OBFUSCATE("802_ButtonOnOff_Ultra Max Mode"),
-        OBFUSCATE("803_ButtonOnOff_None (Reset)"),
-        OBFUSCATE("Category_Runner"),
-        OBFUSCATE("100_Toggle_No Head-On Collision"),
-        OBFUSCATE("101_Toggle_No Side Collision"),
-        OBFUSCATE("102_SeekBar_Jump Limit_0_999"),
-        OBFUSCATE("103_SeekBar_Jump Height_0_200"),
+        OBFUSCATE("800_ButtonOnOff_★ Simple Mode (All Essentials)"),
+        OBFUSCATE("801_ButtonOnOff_★★ Max Mode (Everything On)"),
+        OBFUSCATE("802_ButtonOnOff_★★★ Ultra Max Mode"),
+        OBFUSCATE("803_ButtonOnOff_↺ Reset All Features"),
+        OBFUSCATE("Category_Player"),
+        OBFUSCATE("100_Toggle_No Obstacle Reaction (Head-On + Side)"),
+        OBFUSCATE("102_SeekBar_Max Jump Count_0_999"),
+        OBFUSCATE("103_SeekBar_Jump Height Boost_0_200"),
         OBFUSCATE("104_Toggle_Auto Revive"),
-        OBFUSCATE("130_Toggle_No Gravity"),
-        OBFUSCATE("131_Toggle_No Boundary Impact"),
-        OBFUSCATE("132_Toggle_No Character Stumble"),
-        OBFUSCATE("133_Toggle_Freeze Character"),
-        OBFUSCATE("134_SeekBar_Air Jump Height_0_200"),
-        OBFUSCATE("Category_Powers"),
-        OBFUSCATE("105_SeekBar_Power Duration_0_999"),
-        OBFUSCATE("106_Toggle_Fast Lane Change"),
-        OBFUSCATE("135_Toggle_Hide Jetpack"),
-        OBFUSCATE("136_Toggle_Hide Pogostick"),
-        OBFUSCATE("137_Toggle_Hide Magnet"),
-        OBFUSCATE("138_Toggle_Hide Hoverboard"),
-        OBFUSCATE("140_Toggle_Unlimited Powerup Time"),
-        OBFUSCATE("141_Toggle_Unlimited Jetpack Time"),
+        OBFUSCATE("130_Toggle_Low Gravity (Float)"),
+        OBFUSCATE("131_Toggle_No Wall Impact"),
+        OBFUSCATE("132_Toggle_No Rank Penalty on Hit (Race UI only)"),
+        OBFUSCATE("133_Toggle_Freeze Player Movement"),
+        OBFUSCATE("134_SeekBar_Air Jump Height Boost_0_200"),
+        OBFUSCATE("160_SeekBar_Player Speed Boost_0_200"),
+        OBFUSCATE("Category_Powerups"),
+        OBFUSCATE("105_SeekBar_Powerup Duration_0_999"),
+        OBFUSCATE("106_Toggle_Instant Lane Change"),
+        OBFUSCATE("135_Toggle_Hide Jetpack Visual"),
+        OBFUSCATE("136_Toggle_Hide Pogo Stick Visual"),
+        OBFUSCATE("137_Toggle_Hide Magnet Visual"),
+        OBFUSCATE("138_Toggle_Hide Hoverboard Visual"),
+        OBFUSCATE("140_Toggle_Infinite Powerup Duration"),
+        OBFUSCATE("141_Toggle_Infinite Jetpack Duration"),
         OBFUSCATE("Category_Score"),
-        OBFUSCATE("107_SeekBar_Score Multiplier_0_999"),
-        OBFUSCATE("143_Toggle_Freeze Coins"),
-        OBFUSCATE("144_Toggle_Freeze Score"),
-        OBFUSCATE("Category_Collisions"),
-        OBFUSCATE("108_Toggle_No Collision Detect"),
+        OBFUSCATE("107_SeekBar_Score Multiplier Boost_0_999"),
+        OBFUSCATE("143_Toggle_Freeze Coin Counter"),
+        OBFUSCATE("144_Toggle_Freeze Score Counter"),
+        OBFUSCATE("Category_Collision"),
+        OBFUSCATE("108_Toggle_God Mode (No Collision Detect)"),
         OBFUSCATE("Category_Shop"),
         OBFUSCATE("110_Toggle_Unlimited Coins"),
-        OBFUSCATE("150_Toggle_Unlimited Shop"),
-        OBFUSCATE("151_SeekBar_Add Coins Bonus_0_9999"),
-        OBFUSCATE("152_SeekBar_Add Keys Bonus_0_9999"),
-        OBFUSCATE("153_SeekBar_Add Score Bonus_0_9999"),
-        OBFUSCATE("154_Toggle_Revive Reward"),
-        OBFUSCATE("Category_Character"),
-        OBFUSCATE("160_SeekBar_Character Speed_0_200"),
+        OBFUSCATE("150_Toggle_Unlock All Shop Items (Free IAP)"),
+        OBFUSCATE("151_SeekBar_Extra Coins Per Pickup_0_9999"),
+        OBFUSCATE("152_SeekBar_Extra Keys Per Pickup_0_9999"),
+        OBFUSCATE("153_SeekBar_Extra Score Per Point_0_9999"),
+        OBFUSCATE("154_Toggle_Revive Reward Multiplier"),
         OBFUSCATE("Category_Camera"),
-        OBFUSCATE("161_Spinner_Camera Mode_Normal,Follow,Stop"),
+        OBFUSCATE("161_Spinner_Camera Mode_Normal,Follow Player Y,Stop Vertical"),
         OBFUSCATE("Category_World"),
-        OBFUSCATE("142_Toggle_Stop Moving Trains"),
+        OBFUSCATE("142_Toggle_Freeze Moving Trains"),
         OBFUSCATE("Category_Chams"),
         OBFUSCATE("119_Toggle_Enable Chams"),
         OBFUSCATE("120_Spinner_Chams Mode_Off,Solid Visible,X-Ray,Hybrid Opaque"),
@@ -1137,12 +1093,21 @@ jobjectArray GetFeatureList(JNIEnv* env, jobject) {
 }
 
 // ================================================================
-//  JNI — CHANGES
+//  JNI — CHANGES  (feature 100 now combines frontal + side)
 // ================================================================
 void Changes(JNIEnv*, jclass, jobject, jint featNum, jstring, jint value, jlong, jboolean boolean, jstring) {
     switch (featNum) {
-        case 100: g_FrontalImpact.store(boolean);  break;
-        case 101: g_SideImpact.store(boolean);     break;
+        // ── Combined frontal + side collision suppression ──
+        case 100:
+            g_FrontalImpact.store(boolean);
+            g_SideImpact.store(boolean);
+            break;
+        case 101:
+            // Kept as alias for any stale UI entry / saved state — same behavior
+            g_FrontalImpact.store(boolean);
+            g_SideImpact.store(boolean);
+            break;
+
         case 102: g_JumpLimit.store(value);        break;
         case 103: g_JumpHeight.store(value);       break;
         case 104: g_AutoRevive.store(boolean);     break;
@@ -1183,6 +1148,8 @@ void Changes(JNIEnv*, jclass, jobject, jint featNum, jstring, jint value, jlong,
         case 127: g_MaxDistance = (float)value; break;
         case 121: enableRainbow = boolean;      break;
         case 122: enableRainbowWall = boolean;  break;
+
+        // ── Preset macros ──
         case 800: {
             g_FrontalImpact.store(boolean); g_SideImpact.store(boolean);
             g_AutoRevive.store(boolean);    g_UnlimitedCoins.store(boolean);
