@@ -680,7 +680,9 @@ static void* heartbeat_thread(void*) {
 //   HACK THREAD
 // ================================================================
 void* hack_thread(void*) {
-    LOGI("Waiting for %s ...", LIB);
+    // ✅ CORRECT — convert to std::string first, then pass c_str()
+std::string libNameStr = LIB;
+LOGI("Waiting for %s ...", libNameStr.c_str());
     while (!isLibraryLoaded(LIB)) sleep(1);
     sleep(3);
 
