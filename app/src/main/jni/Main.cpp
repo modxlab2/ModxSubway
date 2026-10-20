@@ -507,7 +507,13 @@ static float  (*old_get_MaxSpeed)(void*)                      = nullptr;
 static void   (*old_UpdateMovement)(void*)                    = nullptr;
 static float  (*old_get_AirJumpHeight)(void*)                 = nullptr;
 static bool   (*old_CameraApply)(void*, void*)                = nullptr;
-static void   (*old_NotifySideImpact)(void*, int, int, void*) = nullptr;
+
+// ★ FIXED: NotifySideImpact(HorizontalImpactType, EntityType, IEntityProvider)
+//   EntityType is a CLASS (KeyScriptableObject) → 64-bit pointer, NOT int.
+//   The previous `int e` truncated the pointer, causing a SIGSEGV on first
+//   dereference inside the original function.
+static void   (*old_NotifySideImpact)(void*, int, void*, void*) = nullptr;
+
 static void   (*old_OnStumble)(void*, int)                    = nullptr;
 static void   (*old_ShowFlight)(void*, bool, int)             = nullptr;
 static void   (*old_ShowPogostick)(void*, bool)               = nullptr;
@@ -633,11 +639,16 @@ static bool new_CameraApply(void* s, void* c) {
            : (old_CameraApply ? old_CameraApply(s, c) : false);
     TRACE_EXIT("CameraGroundedModifier.Apply"); return r;
 }
-static void new_NotifySideImpact(void* s, int h, int e, void* ent) {
+
+// ★ FIXED signature: 2nd arg is EntityType* (class), not int
+static void new_NotifySideImpact(void* s, int h, void* e, void* ent) {
     TRACE_CALL("CharacterMotor.NotifySideImpact");
-    if (!g_NoBoundaryImpact.load() && old_NotifySideImpact) old_NotifySideImpact(s, h, e, ent);
+    if (!g_NoBoundaryImpact.load() && old_NotifySideImpact) {
+        old_NotifySideImpact(s, h, e, ent);
+    }
     TRACE_EXIT("CharacterMotor.NotifySideImpact");
 }
+
 static void new_OnStumble(void* s, int dc) {
     TRACE_CALL("RunProgressOrderIndicator.OnStumble");
     if (!g_NoStumble.load() && old_OnStumble) old_OnStumble(s, dc);
