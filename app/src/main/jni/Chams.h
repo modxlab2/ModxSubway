@@ -3,12 +3,17 @@
 
 #include <dlfcn.h>
 #include <array>
-#include <atomic>
+#include <fstream>
+#include <sstream>
+#include <vector>
+#include <iostream>
+#include <string>
 #include <cstring>
-#include <cstdio>
-#include <cmath>
+#include <ctime>
+#include <chrono>
 #include <android/log.h>
 #include <GLES2/gl2.h>
+#include <math.h>
 #include "RGB.h"
 
 #if defined(__aarch64__)
@@ -32,15 +37,20 @@ struct Vec4 {
 #define CHAMS_TAG "CHAMS"
 #define CHAMS_LOGI(...) __android_log_print(ANDROID_LOG_INFO, CHAMS_TAG, __VA_ARGS__)
 
+// ================================================================
+//  Global state
+// ================================================================
 static void *handle = nullptr;
+std::vector<std::string> shaders;
 
-// ---------- Atomic shared state (no data races between JNI & render thread) ----------
-std::atomic<int>  chamsint{3};
-std::atomic<bool> g_ChamsEnabled{false};
-std::atomic<int>  g_ShaderPreset{0};
-std::atomic<bool> enableRainbow{false};
-std::atomic<bool> enableRainbowWall{false};
+int chamsint = 3; // Default: Hybrid Opaque
+bool g_ChamsEnabled = false;
+std::string mineShader = "_Displacement"; 
+float g_MaxDistance = 40.0f; 
 
+// ================================================================
+//  Color Presets
+// ================================================================
 struct ColorPreset { const char* name; Vec4 visible; Vec4 inWall; };
 static const ColorPreset kColorPresets[] = {
     { "Dark Green / Sky Blue", {0.0f, 0.5f, 0.0f, 1.0f}, {0.3f, 0.8f, 1.0f, 1.0f} },
@@ -49,9 +59,13 @@ static const ColorPreset kColorPresets[] = {
 };
 static const int kColorPresetCount = sizeof(kColorPresets) / sizeof(kColorPresets[0]);
 
+bool enableRainbow = false, enableRainbowWall = false;
 Vec4 visibleColor = Vec4(0.0f, 0.5f, 0.0f, 1.0f);
 Vec4 inWallColor  = Vec4(0.3f, 0.8f, 1.0f, 1.0f);
 
+// ================================================================
+//  Shader Presets
+// ================================================================
 struct ShaderPreset { const char* name; const char* shader; };
 static const ShaderPreset kShaderPresets[] = {
     { "Trains Only (_Displacement)", "_Displacement" },
@@ -64,20 +78,16 @@ void setColorPreset(int idx) {
     if (idx >= 0 && idx < kColorPresetCount) {
         visibleColor = kColorPresets[idx].visible;
         inWallColor  = kColorPresets[idx].inWall;
-        enableRainbow.store(false);
-        enableRainbowWall.store(false);
+        enableRainbow = enableRainbowWall = false;
     }
 }
 void setShaderPreset(int idx) {
-    if (idx >= 0 && idx < kShaderPresetCount) g_ShaderPreset.store(idx);
+    if (idx >= 0 && idx < kShaderPresetCount) mineShader = kShaderPresets[idx].shader;
 }
 
-static const char* GetShaderName() {
-    int idx = g_ShaderPreset.load();
-    if (idx >= 0 && idx < kShaderPresetCount) return kShaderPresets[idx].shader;
-    return "_Displacement";
-}
-
+// ================================================================
+//  GL function pointers
+// ================================================================
 void (*p_glGetIntegerv)(unsigned int, int *)            = nullptr;
 void (*p_glGetBooleanv)(unsigned int, unsigned char *)  = nullptr;
 void (*p_glBlendColor)(float, float, float, float)      = nullptr;
@@ -86,79 +96,106 @@ void (*p_glLineWidth)(float)                            = nullptr;
 void (*p_glBlendFunc)(unsigned int, unsigned int)       = nullptr;
 void (*p_glDisable)(unsigned int)                       = nullptr;
 void (*p_glCullFace)(unsigned int)                      = nullptr;
-void (*p_glDepthFunc)(unsigned int)                     = nullptr;
+void (*p_glDepthFunc)(unsigned int)                     = nullptr; 
 void (*p_glDepthMask)(unsigned char)                    = nullptr;
+void (*p_glGetUniformfv)(unsigned int, int, float*)     = nullptr;
 
-int  (*old_glGetUniformLocation)(unsigned int, const char *) = nullptr;
-void (*old_glDrawElements)(unsigned int, int, unsigned int, const void *) = nullptr;
-
-// ★ Removed new_glGetUniformLocation entirely — it was a big freeze source:
-//   - vector<string> mutated from Unity worker threads → data race
-//   - heap allocation on every uniform lookup during shader warmup
-//   - collected data was never used anywhere
-// We just need the original pointer for the draw hook's per-program cache.
-
-void new_glDrawElements(unsigned int mode, int count, unsigned int type, const void *indices) {
-    // FAST PATH — Chams off → zero overhead, no GL state queries
-    if (!g_ChamsEnabled.load() || chamsint.load() == 0) {
-        old_glDrawElements(mode, count, type, indices);
-        return;
+int (*old_glGetUniformLocation)(unsigned int, const char *) = nullptr;
+int new_glGetUniformLocation(unsigned int program, const char *name) {
+    if (name) {
+        bool isExist = false;
+        std::string thisShader = name;
+        for (const auto& s : shaders) if (s == thisShader) { isExist = true; break; }
+        if (!isExist) shaders.push_back(thisShader);
     }
+    return old_glGetUniformLocation(program, name);
+}
 
-    const char* shaderName = GetShaderName();
-    // '_Displacement'[1] == 'D', '_MainTex'[1] == 'M', '_Color'[1] == 'C'
-    int minCount = (shaderName[1] == 'D') ? 1500 : 3000;
+// ================================================================
+//  glDrawElements hook
+// ================================================================
+void (*old_glDrawElements)(unsigned int, int, unsigned int, const void *) = nullptr;
+void new_glDrawElements(unsigned int mode, int count, unsigned int type, const void *indices) {
+
+    int minCount = (mineShader == "_Displacement") ? 1500 : 3000;
     if (mode != GL_TRIANGLES || count < minCount) {
-        old_glDrawElements(mode, count, type, indices);
-        return;
+        return old_glDrawElements(mode, count, type, indices);
     }
 
     unsigned char blend = 0;
     p_glGetBooleanv(GL_BLEND, &blend);
-    if (blend) { old_glDrawElements(mode, count, type, indices); return; }
+    if (blend) return old_glDrawElements(mode, count, type, indices);
 
     unsigned char depthTest = 0;
     p_glGetBooleanv(GL_DEPTH_TEST, &depthTest);
-    if (!depthTest) { old_glDrawElements(mode, count, type, indices); return; }
+    if (!depthTest) return old_glDrawElements(mode, count, type, indices);
 
     int currProgram = 0;
     p_glGetIntegerv(GL_CURRENT_PROGRAM, &currProgram);
-
-    static int lastProgram     = -1;
-    static int cachedShaderLoc = -1;
-    if (currProgram != lastProgram) {
-        cachedShaderLoc = old_glGetUniformLocation(currProgram, shaderName);
-        lastProgram     = currProgram;
+    int shader = old_glGetUniformLocation(currProgram, mineShader.c_str());
+    
+    if (shader == -1 || !g_ChamsEnabled || chamsint == 0) {
+        return old_glDrawElements(mode, count, type, indices);
     }
-    if (cachedShaderLoc == -1) { old_glDrawElements(mode, count, type, indices); return; }
 
-    if (enableRainbow.load()) {
-        visibleColor.x = redd / 255.0f;
-        visibleColor.y = greenn / 255.0f;
-        visibleColor.z = bluee / 255.0f;
+    // ★ Distance Filter (Fixed using matrix translation)
+    if (g_MaxDistance > 0.0f) {
+        // hlslcc_mtx4x4unity_ObjectToWorld[3] is the translation column
+        int objLoc = old_glGetUniformLocation(currProgram, "hlslcc_mtx4x4unity_ObjectToWorld[3]");
+        int camLoc = old_glGetUniformLocation(currProgram, "_WorldSpaceCameraPos");
+        
+        if (objLoc != -1 && camLoc != -1) {
+            float objVec[4]; // Translation is vec4 (x, y, z, 1)
+            float cam[3];
+            p_glGetUniformfv(currProgram, objLoc, objVec);
+            p_glGetUniformfv(currProgram, camLoc, cam);
+            
+            float dx = objVec[0] - cam[0];
+            float dz = objVec[2] - cam[2];
+            float dist = sqrt(dx*dx + dz*dz);
+
+            // Log for debugging
+            static std::chrono::steady_clock::time_point lastLogTime;
+            auto now = std::chrono::steady_clock::now();
+            if (std::chrono::duration_cast<std::chrono::milliseconds>(now - lastLogTime).count() > 1000) {
+                lastLogTime = now;
+                std::ofstream logFile("/sdcard/Documents/Chams_Debug.txt", std::ios::app);
+                if (logFile.is_open()) {
+                    logFile << "Dist: " << dist << " | ObjZ: " << objVec[2] << " | CamZ: " << cam[2] << " | Max: " << g_MaxDistance << "\n";
+                    logFile.close();
+                }
+            }
+
+            if (dist > g_MaxDistance) {
+                return old_glDrawElements(mode, count, type, indices);
+            }
+        }
     }
-    if (enableRainbowWall.load()) {
-        inWallColor.x = redd / 255.0f;
-        inWallColor.y = greenn / 255.0f;
-        inWallColor.z = bluee / 255.0f;
+
+    if (enableRainbow) {
+        visibleColor.x = redd / 255.0f; visibleColor.y = greenn / 255.0f; visibleColor.z = bluee / 255.0f;
+    }
+    if (enableRainbowWall) {
+        inWallColor.x = redd / 255.0f; inWallColor.y = greenn / 255.0f; inWallColor.z = bluee / 255.0f;
     }
     performRGBChange();
 
-    // Original pass
+    // Draw original game object
     old_glDrawElements(mode, count, type, indices);
 
     p_glEnable(GL_BLEND);
-    p_glBlendFunc(GL_ONE, GL_CONSTANT_COLOR);
+    p_glBlendFunc(GL_ONE, GL_CONSTANT_COLOR); 
 
-    int m = chamsint.load();
-    if (m == 1) {
-        p_glDepthMask(GL_FALSE);
+    // Mode 1: Solid Visible
+    if (chamsint == 1) {
+        p_glDepthMask(GL_FALSE); 
         p_glBlendColor(visibleColor.x, visibleColor.y, visibleColor.z, 1.0f);
         old_glDrawElements(mode, count, type, indices);
         p_glDepthMask(GL_TRUE);
     }
-    else if (m == 2) {
-        p_glDepthMask(GL_FALSE);
+    // Mode 2: X-Ray
+    else if (chamsint == 2) {
+        p_glDepthMask(GL_FALSE); 
         p_glDisable(GL_DEPTH_TEST);
         p_glDisable(GL_CULL_FACE);
         p_glBlendColor(visibleColor.x, visibleColor.y, visibleColor.z, 1.0f);
@@ -167,15 +204,18 @@ void new_glDrawElements(unsigned int mode, int count, unsigned int type, const v
         p_glEnable(GL_CULL_FACE);
         p_glDepthMask(GL_TRUE);
     }
-    else if (m == 3) {
+    // Mode 3: Hybrid Opaque
+    else if (chamsint == 3) {
         p_glEnable(GL_DEPTH_TEST);
-        p_glDepthFunc(GL_LESS);
-
-        p_glCullFace(GL_FRONT);
+        p_glDepthFunc(GL_LESS); 
+        
+        // 1. Draw inner walls (Sky Blue) by culling FRONT faces
+        p_glCullFace(GL_FRONT); 
         p_glBlendColor(inWallColor.x, inWallColor.y, inWallColor.z, 1.0f);
         old_glDrawElements(mode, count, type, indices);
 
-        p_glCullFace(GL_BACK);
+        // 2. Draw outer walls (Dark Green) by culling BACK faces
+        p_glCullFace(GL_BACK); 
         p_glBlendColor(visibleColor.x, visibleColor.y, visibleColor.z, 1.0f);
         old_glDrawElements(mode, count, type, indices);
     }
@@ -186,33 +226,26 @@ void new_glDrawElements(unsigned int mode, int count, unsigned int type, const v
 
 void RenderHook() {
     if (!handle) handle = dlopen("libGLESv2.so", RTLD_LAZY);
-    if (!handle) {
-        CHAMS_LOGI("libGLESv2.so not found — Chams disabled");
-        return;
-    }
+    if (!handle) return;
 
-    p_glGetIntegerv = (void (*)(unsigned int, int *))           dlsym(handle, "glGetIntegerv");
-    p_glGetBooleanv = (void (*)(unsigned int, unsigned char *)) dlsym(handle, "glGetBooleanv");
-    p_glBlendColor  = (void (*)(float, float, float, float))    dlsym(handle, "glBlendColor");
-    p_glEnable      = (void (*)(unsigned int))                  dlsym(handle, "glEnable");
-    p_glLineWidth   = (void (*)(float))                         dlsym(handle, "glLineWidth");
-    p_glBlendFunc   = (void (*)(unsigned int, unsigned int))    dlsym(handle, "glBlendFunc");
-    p_glDisable     = (void (*)(unsigned int))                  dlsym(handle, "glDisable");
-    p_glCullFace    = (void (*)(unsigned int))                  dlsym(handle, "glCullFace");
-    p_glDepthFunc   = (void (*)(unsigned int))                  dlsym(handle, "glDepthFunc");
-    p_glDepthMask   = (void (*)(unsigned char))                 dlsym(handle, "glDepthMask");
+    p_glGetIntegerv  = (void (*)(unsigned int, int *))            dlsym(handle, "glGetIntegerv");
+    p_glGetBooleanv  = (void (*)(unsigned int, unsigned char *))  dlsym(handle, "glGetBooleanv");
+    p_glBlendColor   = (void (*)(float, float, float, float))     dlsym(handle, "glBlendColor");
+    p_glEnable       = (void (*)(unsigned int))                   dlsym(handle, "glEnable");
+    p_glLineWidth    = (void (*)(float))                          dlsym(handle, "glLineWidth");
+    p_glBlendFunc    = (void (*)(unsigned int, unsigned int))     dlsym(handle, "glBlendFunc");
+    p_glDisable      = (void (*)(unsigned int))                   dlsym(handle, "glDisable");
+    p_glCullFace     = (void (*)(unsigned int))                   dlsym(handle, "glCullFace");
+    
+    p_glDepthFunc    = (void (*)(unsigned int))                   dlsym(handle, "glDepthFunc");
+    p_glDepthMask    = (void (*)(unsigned char))                  dlsym(handle, "glDepthMask");
+    p_glGetUniformfv = (void (*)(unsigned int, int, float*))      dlsym(handle, "glGetUniformfv");
 
-    // NO hook on glGetUniformLocation — just fetch the original pointer.
-    old_glGetUniformLocation = (int (*)(unsigned int, const char *))
-                               dlsym(handle, "glGetUniformLocation");
-
+    void *pGet = dlsym(handle, "glGetUniformLocation");
+    if (pGet) HOOK_FN(pGet, (void*)new_glGetUniformLocation, (void**)&old_glGetUniformLocation);
+    
     void *pDraw = dlsym(handle, "glDrawElements");
-    if (pDraw && old_glGetUniformLocation) {
-        HOOK_FN(pDraw, (void*)new_glDrawElements, (void**)&old_glDrawElements);
-        CHAMS_LOGI("glDrawElements hooked OK");
-    } else {
-        CHAMS_LOGI("Chams hook FAILED (missing symbol)");
-    }
+    if (pDraw) HOOK_FN(pDraw, (void*)new_glDrawElements, (void**)&old_glDrawElements);
 }
 
 #endif
