@@ -84,19 +84,6 @@ static void safeHexToStr(unsigned long val, char* buf, int bufsz) {
     buf[k] = 0;
 }
 
-static int safeItoa(long val, char* buf, int bufsz) {
-    if (bufsz < 2) return 0;
-    char tmp[24]; int n = 0; bool neg = false;
-    if (val < 0) { neg = true; val = -val; }
-    if (val == 0) tmp[n++] = '0';
-    while (val > 0 && n < (int)sizeof(tmp)) { tmp[n++] = (char)('0' + (val % 10)); val /= 10; }
-    int k = 0;
-    if (neg && k < bufsz - 1) buf[k++] = '-';
-    while (n > 0 && k < bufsz - 1) buf[k++] = tmp[--n];
-    buf[k] = 0;
-    return k;
-}
-
 // ================================================================
 //  LOGGER
 // ================================================================
@@ -339,9 +326,7 @@ static bool skipHookFile(const std::string& hookName) {
 }
 
 // ================================================================
-//  ⚠️  PROLOGUE SAFETY CHECK
-//  — Now correctly allows RET (D65F...) so tiny leaf functions
-//    like Currency.get_IsIAP hook properly.
+//  PROLOGUE SAFETY CHECK
 // ================================================================
 static const char* checkFunctionSafety(void* addr) {
     if (!addr) return "null-addr";
@@ -351,18 +336,13 @@ static const char* checkFunctionSafety(void* addr) {
     if (w0 == 0xD65F03C0) return "empty-function (RET at insn 0)";
     if (w1 == 0xD65F03C0) return "tiny-function (8-byte)";
 
-    // Only BLOCK genuine indirect branches — NOT RET / ERET.
     for (int i = 0; i < 4; i++) {
         uint32_t w = code[i];
         if ((w & 0x7C000000) == 0x14000000) return "B in prologue";
         if ((w & 0x7C000000) == 0x94000000) return "BL in prologue";
-        // BR (any Rn) — D61F....
         if ((w & 0xFFFF0000) == 0xD61F0000) return "BR in prologue";
-        // BLR (any Rn) — D63F....
         if ((w & 0xFFFF0000) == 0xD63F0000) return "BLR in prologue";
-        // CBZ / CBNZ
         if ((w & 0x7E000000) == 0x34000000) return "CBZ/CBNZ in prologue";
-        // TBZ / TBNZ
         if ((w & 0x7E000000) == 0x36000000) return "TBZ/TBNZ in prologue";
     }
     return nullptr;
@@ -377,7 +357,7 @@ static inline long long nowMs() {
 }
 
 static std::atomic<bool> g_FrontalImpact    {false};
-static std::atomic<bool> g_SideImpact       {false};   // ← also gated by feature 100
+static std::atomic<bool> g_SideImpact       {false};
 static std::atomic<int>  g_JumpLimit        {0};
 static std::atomic<int>  g_JumpHeight       {0};
 static std::atomic<bool> g_AutoRevive       {false};
@@ -470,10 +450,7 @@ static float  (*old_get_MaxSpeed)(void*)                      = nullptr;
 static void   (*old_UpdateMovement)(void*)                    = nullptr;
 static float  (*old_get_AirJumpHeight)(void*)                 = nullptr;
 static bool   (*old_CameraApply)(void*, void*)                = nullptr;
-
-// NotifySideImpact(HorizontalImpactType, EntityType*, IEntityProvider)  — EntityType is a class → void*
 static void   (*old_NotifySideImpact)(void*, int, void*, void*) = nullptr;
-
 static void   (*old_OnStumble)(void*, int)                    = nullptr;
 static void   (*old_ShowFlight)(void*, bool, int)             = nullptr;
 static void   (*old_ShowPogostick)(void*, bool)               = nullptr;
@@ -599,13 +576,25 @@ static bool new_CameraApply(void* s, void* c) {
            : (old_CameraApply ? old_CameraApply(s, c) : false);
     TRACE_EXIT("CameraGroundedModifier.Apply"); return r;
 }
+
+// ★ FIXED: NotifySideImpact is the only installed hook that fires on side hits.
+// CheckSideImpact hook is SKIPPED (CBZ prologue) so g_SideImpact had no consumer.
+// Now gating NotifySideImpact on BOTH g_NoBoundaryImpact (feature 131) AND
+// g_SideImpact (feature 100) so "No Obstacle Reaction" truly blocks side damage.
 static void new_NotifySideImpact(void* s, int h, void* e, void* ent) {
     TRACE_CALL("CharacterMotor.NotifySideImpact");
-    if (!g_NoBoundaryImpact.load() && old_NotifySideImpact) {
+    bool suppress = g_NoBoundaryImpact.load() || g_SideImpact.load();
+    if (_myCall <= 3) {
+        LOGI("[SIDEIMPACT] h=%d suppress=%d (boundary=%d side=%d)",
+             h, (int)suppress,
+             (int)g_NoBoundaryImpact.load(), (int)g_SideImpact.load());
+    }
+    if (!suppress && old_NotifySideImpact) {
         old_NotifySideImpact(s, h, e, ent);
     }
     TRACE_EXIT("CharacterMotor.NotifySideImpact");
 }
+
 static void new_OnStumble(void* s, int dc) {
     TRACE_CALL("RunProgressOrderIndicator.OnStumble");
     if (!g_NoStumble.load() && old_OnStumble) old_OnStumble(s, dc);
@@ -669,16 +658,24 @@ static void new_FinishFlight(void* s) {
     if (!g_UnlimitedJetpackTime.load() && old_FinishFlight) old_FinishFlight(s);
     TRACE_EXIT("FlyingState.FinishFlight");
 }
+
+// ★ Defensive: cap loop count and null-guard so revive-cancel path can't crash
 static void new_OnRevivedWithCurrency(void* s) {
     TRACE_CALL("MainReviveSystem.OnRevivedWithCurrency");
     int n = g_ReviveReward.load() ? 10 : 1;
-    for (int i = 0; i < n; i++) if (old_OnRevivedWithCurrency) old_OnRevivedWithCurrency(s);
+    if (n > 20) n = 20;
+    for (int i = 0; i < n; i++) {
+        if (old_OnRevivedWithCurrency) old_OnRevivedWithCurrency(s);
+    }
     TRACE_EXIT("MainReviveSystem.OnRevivedWithCurrency");
 }
 static void new_MockRevivedWithCurrency(void* s) {
     TRACE_CALL("MockReviveSystem.OnRevivedWithCurrency");
     int n = g_ReviveReward.load() ? 10 : 1;
-    for (int i = 0; i < n; i++) if (old_MockRevivedWithCurrency) old_MockRevivedWithCurrency(s);
+    if (n > 20) n = 20;
+    for (int i = 0; i < n; i++) {
+        if (old_MockRevivedWithCurrency) old_MockRevivedWithCurrency(s);
+    }
     TRACE_EXIT("MockReviveSystem.OnRevivedWithCurrency");
 }
 static void new_HandleCoinsPickedUp(void* s) {
@@ -785,9 +782,8 @@ static void installPhase1() {
 //  PHASE 2
 // ================================================================
 static void installPhase2() {
-    LOGI("=== PHASE 2: currency / gravity / movement ===");
+    LOGI("=== PHASE 2: currency / gravity / movement / side-impact ===");
     {
-        // ★ The fix for RET in the safety check makes this hook now succeed.
         auto C = new LoadClass(OBFUSCATE("SYBO.Subway.Core.CommonData"), OBFUSCATE("Currency"));
         if (C && C->thisclass) {
             DWORD o = C->GetMethodOffsetByName(OBFUSCATE("get_IsIAP"),0);
@@ -1031,17 +1027,17 @@ void* hack_thread(void*) {
 }
 
 // ================================================================
-//  JNI — FEATURE LIST  (user-friendly names + combined collision toggle)
+//  JNI — FEATURE LIST
 // ================================================================
 jobjectArray GetFeatureList(JNIEnv* env, jobject) {
     jobjectArray ret;
     const char* features[] = {
-        OBFUSCATE("800_ButtonOnOff_★ Simple Mode (All Essentials)"),
-        OBFUSCATE("801_ButtonOnOff_★★ Max Mode (Everything On)"),
+        OBFUSCATE("800_ButtonOnOff_★ Simple Mode"),
+        OBFUSCATE("801_ButtonOnOff_★★ Max Mode"),
         OBFUSCATE("802_ButtonOnOff_★★★ Ultra Max Mode"),
         OBFUSCATE("803_ButtonOnOff_↺ Reset All Features"),
         OBFUSCATE("Category_Player"),
-        OBFUSCATE("100_Toggle_No Obstacle Reaction (Head-On + Side)"),
+        OBFUSCATE("100_Toggle_No Obstacle Reaction (Frontal + Side)"),
         OBFUSCATE("102_SeekBar_Max Jump Count_0_999"),
         OBFUSCATE("103_SeekBar_Jump Height Boost_0_200"),
         OBFUSCATE("104_Toggle_Auto Revive"),
@@ -1093,21 +1089,18 @@ jobjectArray GetFeatureList(JNIEnv* env, jobject) {
 }
 
 // ================================================================
-//  JNI — CHANGES  (feature 100 now combines frontal + side)
+//  JNI — CHANGES
 // ================================================================
 void Changes(JNIEnv*, jclass, jobject, jint featNum, jstring, jint value, jlong, jboolean boolean, jstring) {
     switch (featNum) {
-        // ── Combined frontal + side collision suppression ──
         case 100:
             g_FrontalImpact.store(boolean);
             g_SideImpact.store(boolean);
             break;
         case 101:
-            // Kept as alias for any stale UI entry / saved state — same behavior
             g_FrontalImpact.store(boolean);
             g_SideImpact.store(boolean);
             break;
-
         case 102: g_JumpLimit.store(value);        break;
         case 103: g_JumpHeight.store(value);       break;
         case 104: g_AutoRevive.store(boolean);     break;
@@ -1148,8 +1141,6 @@ void Changes(JNIEnv*, jclass, jobject, jint featNum, jstring, jint value, jlong,
         case 127: g_MaxDistance = (float)value; break;
         case 121: enableRainbow = boolean;      break;
         case 122: enableRainbowWall = boolean;  break;
-
-        // ── Preset macros ──
         case 800: {
             g_FrontalImpact.store(boolean); g_SideImpact.store(boolean);
             g_AutoRevive.store(boolean);    g_UnlimitedCoins.store(boolean);
