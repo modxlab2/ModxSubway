@@ -301,15 +301,31 @@ static bool skipHookFile(const std::string& hookName) {
 
 // ================================================================
 //  PROLOGUE SAFETY CHECK
+//  ------------------------------------------------------------------
+//  IMPORTANT: A64HookFunction cannot safely hook tiny functions.
+//  Its trampoline saves the first 4 instructions and then jumps
+//  back to (original + 0x10). If the function is only 4 instructions
+//  long (RET at insn 3), that jump goes PAST the function end into
+//  the next function's code → SIGILL / SIGSEGV.
+//
+//  This was the root cause of the CrashLog:
+//    Fault 0x72cb5877a4 = Currency.get_IsIAP + 0x10
+//  (see Currency.get_IsIAP body: b9401008 7100291f 1a9f17e0 d65f03c0)
+//
+//  We now reject ANY function whose first 4 instructions contain RET.
 // ================================================================
 static const char* checkFunctionSafety(void* addr) {
     if (!addr) return "null-addr";
     uint32_t* code = (uint32_t*)addr;
     uint32_t w0 = code[0], w1 = code[1], w2 = code[2], w3 = code[3];
 
+    // Reject tiny functions (RET in first 4 instructions = unsafe for hooking)
     if (w0 == 0xD65F03C0) return "empty-function (RET at insn 0)";
-    if (w1 == 0xD65F03C0) return "tiny-function (8-byte)";
+    if (w1 == 0xD65F03C0) return "tiny-function (RET at insn 1)";
+    if (w2 == 0xD65F03C0) return "tiny-function (RET at insn 2)";
+    if (w3 == 0xD65F03C0) return "tiny-function (RET at insn 3)";
 
+    // Reject branches in prologue
     for (int i = 0; i < 4; i++) {
         uint32_t w = code[i];
         if ((w & 0x7C000000) == 0x14000000) return "B in prologue";
@@ -339,6 +355,10 @@ static std::atomic<bool> g_NoCollision      {false};
 static std::atomic<bool> g_UnlimitedCoins   {false};
 static std::atomic<long long> g_NoCollisionStartMs{0};
 
+// NOTE: g_UnlimitedShop is kept for UI compatibility.
+//       It no longer hooks Currency.get_IsIAP (crash source — see above).
+//       Unlimited Coins (WalletModel.GetCurrency) already handles most
+//       coin-based purchases, which covers the majority of the shop.
 static std::atomic<bool> g_UnlimitedShop       {false};
 static std::atomic<bool> g_NoGravity           {false};
 static std::atomic<bool> g_FreezeCharacter     {false};
@@ -411,7 +431,10 @@ static int   (*old_get_BaseMultiplierSum)(void*)              = nullptr;
 static bool  (*old_get_detectCollisions)(void*)               = nullptr;
 static int   (*old_GetCurrency)(void*, int)                   = nullptr;
 
-static bool   (*old_get_IsIAP)(void*)                         = nullptr;
+// NOTE: old_get_IsIAP REMOVED — the A64HookFunction trampoline for this
+// 4-instruction function is broken and causes SIGILL on revive cancel.
+// See checkFunctionSafety() comment for details.
+
 static void   (*old_ApplyGravity)(void*)                      = nullptr;
 static float  (*old_get_MinSpeed)(void*)                      = nullptr;
 static float  (*old_get_MaxSpeed)(void*)                      = nullptr;
@@ -478,10 +501,9 @@ static int new_GetCurrency(void* s, int t) {
     if (g_UnlimitedCoins.load()) { TRACE_CALL("WalletModel.GetCurrency"); TRACE_EXIT("WalletModel.GetCurrency"); return 99999999; }
     return old_GetCurrency ? old_GetCurrency(s, t) : 0;
 }
-static bool new_get_IsIAP(void* s) {
-    if (g_UnlimitedShop.load()) { TRACE_CALL("Currency.get_IsIAP"); TRACE_EXIT("Currency.get_IsIAP"); return false; }
-    return old_get_IsIAP ? old_get_IsIAP(s) : false;
-}
+
+// NOTE: new_get_IsIAP REMOVED — see old_get_IsIAP note above.
+
 static void new_ApplyGravity(void* s) {
     if (g_NoGravity.load()) { TRACE_CALL("CharacterMotor.ApplyGravity"); TRACE_EXIT("CharacterMotor.ApplyGravity"); return; }
     if (old_ApplyGravity) old_ApplyGravity(s);
@@ -596,7 +618,7 @@ static void* heartbeat_thread(void*) {
 }
 
 // ================================================================
-//  PHASES (CheckImpact removed)
+//  PHASES
 // ================================================================
 static void installPhase1() {
     LOGI("=== PHASE 1: core hooks ===");
@@ -650,14 +672,30 @@ static void installPhase1() {
 }
 
 static void installPhase2() {
-    LOGI("=== PHASE 2: currency / gravity / movement / side-impact ===");
-    {
-        auto C = new LoadClass(OBFUSCATE("SYBO.Subway.Core.CommonData"), OBFUSCATE("Currency"));
-        if (C && C->thisclass) {
-            DWORD o = C->GetMethodOffsetByName(OBFUSCATE("get_IsIAP"),0);
-            if (o) HOOK_CHECK("Currency","get_IsIAP",o,(void*)new_get_IsIAP,old_get_IsIAP);
-        }
-    }
+    LOGI("=== PHASE 2: gravity / movement / side-impact ===");
+    // ================================================================
+    // NOTE: Currency.get_IsIAP hook REMOVED on purpose.
+    //
+    // The function is only 4 ARM64 instructions:
+    //   b9401008  LDR   W8, [X0, #0x10]
+    //   7100291f  CMP   W8, #0xA
+    //   1a9f17e0  CSET  W0, EQ
+    //   d65f03c0  RET
+    //
+    // A64HookFunction's trampoline unconditionally jumps to
+    // (original + 0x10) after replaying 4 saved instructions. Since
+    // 0x10 == the end of the function, that jump lands in the next
+    // function's prologue → SIGILL crash on the very first call.
+    //
+    // CrashLog confirmed:
+    //   Signal : SIGILL
+    //   Fault  : 0x72cb5877a4   (= get_IsIAP (0x72cb587794) + 0x10)
+    //
+    // The “Unlimited Shop” toggle remains in the UI for compatibility,
+    // but it no longer hooks anything. Most shop items are coin-based,
+    // and “Unlimited Coins” (WalletModel.GetCurrency) already unlocks
+    // them. Real-money IAP items stay locked — which is fine.
+    // ================================================================
     {
         auto C = new LoadClass(OBFUSCATE("SYBO.RunnerCore.Character"), OBFUSCATE("CharacterMotor"));
         if (C && C->thisclass) {
@@ -691,6 +729,8 @@ static void installPhase4() {
         DWORD o1 = C->GetMethodOffsetByName(OBFUSCATE("get_MinSpeed"),0);
         DWORD o2 = C->GetMethodOffsetByName(OBFUSCATE("get_MaxSpeed"),0);
         DWORD o3 = C->GetMethodOffsetByName(OBFUSCATE("get_AirJumpHeight"),0);
+        // get_MinSpeed / get_MaxSpeed have RET at insn 1 → will be skipped
+        // safely by checkFunctionSafety().
         if (o1) HOOK_CHECK("CharacterMotorAbilities","get_MinSpeed",o1,(void*)new_get_MinSpeed,old_get_MinSpeed);
         if (o2) HOOK_CHECK("CharacterMotorAbilities","get_MaxSpeed",o2,(void*)new_get_MaxSpeed,old_get_MaxSpeed);
         if (o3) HOOK_CHECK("CharacterMotorAbilities","get_AirJumpHeight",o3,(void*)new_get_AirJumpHeight,old_get_AirJumpHeight);
@@ -917,7 +957,7 @@ void Changes(JNIEnv*, jclass, jobject, jint featNum, jstring, jint value, jlong,
         case 142: g_StopTrains.store(boolean);           break;
         case 143: g_FreezeCoins.store(boolean);          break;
         case 144: g_FreezeScore.store(boolean);          break;
-        case 150: g_UnlimitedShop.store(boolean);        break;
+        case 150: g_UnlimitedShop.store(boolean);        break; // no-op now (see Phase 2 note)
         case 151: g_AddCoinsBonus.store(value);          break;
         case 152: g_AddKeysBonus.store(value);           break;
         case 153: g_AddScoreBonus.store(value);          break;
