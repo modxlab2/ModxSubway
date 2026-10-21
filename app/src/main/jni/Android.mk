@@ -67,7 +67,6 @@ LOCAL_C_INCLUDES += $(LOCAL_PATH)/AutoHook/
 LOCAL_SRC_FILES := \
     Main.cpp \
     Security.cpp \
-    NativeCrashHandler.cpp \
     Menu/Jni.cpp \
     Menu/Menu.cpp \
     Menu/Setup.cpp \

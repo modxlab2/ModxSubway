@@ -1,4 +1,4 @@
-// Main.cpp — FULL FIXED (OnStumble removed)
+// Main.cpp
 #include "Includes.h"
 #include "Includes/Logger.h"
 #include "Includes/obfuscate.h"
@@ -143,25 +143,6 @@ static std::string findLogDir() {
     return "";
 }
 
-static void* findModuleBase(const char* libName) {
-    FILE* f = fopen("/proc/self/maps", "r");
-    if (!f) return nullptr;
-    char line[512];
-    while (fgets(line, sizeof(line), f)) {
-        if (strstr(line, libName)) {
-            char* dash = strchr(line, '-');
-            if (dash) {
-                char* endptr = nullptr;
-                unsigned long start = strtoul(line, &endptr, 16);
-                fclose(f);
-                return (void*)start;
-            }
-        }
-    }
-    fclose(f);
-    return nullptr;
-}
-
 // ================================================================
 //  CRASH HANDLER
 // ================================================================
@@ -202,12 +183,6 @@ static void crashHandler(int sig, siginfo_t* info, void* ctx) {
         safeWriteStr(g_LogFd,   "Fault   : "); safeWriteStr(g_LogFd,   hex); safeWriteStr(g_LogFd,   "\n");
     }
 
-    {
-        char hex[24]; safeHexToStr((unsigned long)pthread_self(), hex, sizeof(hex));
-        safeWriteStr(g_CrashFd, "TID     : "); safeWriteStr(g_CrashFd, hex); safeWriteStr(g_CrashFd, "\n");
-        safeWriteStr(g_LogFd,   "TID     : "); safeWriteStr(g_LogFd,   hex); safeWriteStr(g_LogFd,   "\n");
-    }
-
     if (g_CrashFd >= 0) fsync(g_CrashFd);
     if (g_LogFd   >= 0) fsync(g_LogFd);
 
@@ -242,7 +217,6 @@ static void crashHandler(int sig, siginfo_t* info, void* ctx) {
         if (g_LogFd   >= 0) fsync(g_LogFd);
     }
 
-    // Cancel safety timer before chaining
     alarm(0);
 
     for (int i = 0; i < 5; i++) {
@@ -288,10 +262,8 @@ static void installCrashHandler() {
 // ================================================================
 static void initLogging() {
     g_LogDir = findLogDir();
-    if (g_LogDir.empty()) {
-        __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, "No writable log dir");
-        return;
-    }
+    if (g_LogDir.empty()) return;
+    
     std::string mainPath  = g_LogDir + "/modxlab.log";
     std::string crashPath = g_LogDir + "/modxlab_crash.log";
 
@@ -300,10 +272,7 @@ static void initLogging() {
 
     if (g_LogFd >= 0) {
         g_LogReady.store(true);
-        safeWriteStr(g_LogFd,
-            "\n\n========================================\n"
-            "ModXLab Session Start (O_SYNC mode)\n"
-            "========================================\n");
+        safeWriteStr(g_LogFd, "\n\n========================================\nModXLab Session Start\n========================================\n");
     }
     g_StartupFlagPath = g_LogDir + "/startup_pending";
     g_SafeModePath    = g_LogDir + "/SAFE_MODE";
@@ -359,8 +328,7 @@ static inline long long nowMs() {
         std::chrono::steady_clock::now().time_since_epoch()).count();
 }
 
-static std::atomic<bool> g_FrontalImpact    {false};
-static std::atomic<bool> g_SideImpact       {false};
+// Impact Hooks Removed (Causes Physics Crash)
 static std::atomic<int>  g_JumpLimit        {0};
 static std::atomic<int>  g_JumpHeight       {0};
 static std::atomic<bool> g_AutoRevive       {false};
@@ -432,11 +400,8 @@ static std::atomic<bool> g_FreezeScore         {false};
     LOGE("[HOOK MISS] %s.%s — offset not found", className, methodName)
 
 // ================================================================
-//  ORIGINAL FUNCTION POINTERS
-//  (OnStumble removed per user request)
+//  ORIGINAL POINTERS
 // ================================================================
-static bool  (*old_CheckFrontalImpact)(void*, void*)          = nullptr;
-static bool  (*old_CheckSideImpact)(void*, void*)             = nullptr;
 static int   (*old_get_JumpLimit)(void*)                      = nullptr;
 static float (*old_get_JumpHeight)(void*)                     = nullptr;
 static bool  (*old_IsAutoReviveEnabled)(void*)                = nullptr;
@@ -473,14 +438,6 @@ static void   (*old_HandlePointsEarned)(void*)                = nullptr;
 // ================================================================
 //  HOOK IMPLEMENTATIONS
 // ================================================================
-static bool new_CheckFrontalImpact(void* s, void* o) {
-    if (g_FrontalImpact.load()) { TRACE_CALL("CharacterMotor.CheckFrontalImpact"); TRACE_EXIT("CharacterMotor.CheckFrontalImpact"); return false; }
-    return old_CheckFrontalImpact ? old_CheckFrontalImpact(s, o) : false;
-}
-static bool new_CheckSideImpact(void* s, void* o) {
-    if (g_SideImpact.load()) { TRACE_CALL("CharacterMotor.CheckSideImpact"); TRACE_EXIT("CharacterMotor.CheckSideImpact"); return false; }
-    return old_CheckSideImpact ? old_CheckSideImpact(s, o) : false;
-}
 static int new_get_JumpLimit(void* s) {
     int v = g_JumpLimit.load();
     if (v > 0) { TRACE_CALL("CharacterMotorAbilities.get_JumpLimit"); TRACE_EXIT("CharacterMotorAbilities.get_JumpLimit"); return v; }
@@ -555,7 +512,7 @@ static bool new_CameraApply(void* s, void* c) {
     return old_CameraApply ? old_CameraApply(s, c) : false;
 }
 static void new_NotifySideImpact(void* s, int h, void* e, void* ent) {
-    if (g_NoBoundaryImpact.load() || g_SideImpact.load()) {
+    if (g_NoBoundaryImpact.load()) {
         TRACE_CALL("CharacterMotor.NotifySideImpact"); TRACE_EXIT("CharacterMotor.NotifySideImpact");
         return;
     }
@@ -632,31 +589,17 @@ static void* heartbeat_thread(void*) {
     int n = 0;
     while (true) {
         sleep(60); n++;
-        LOGI("[HEARTBEAT %02d] alive | step=%s", n, bootStepName(g_BootStep.load()));
-        if (n == 1) {
-            markStartupComplete();
-            LOGI("[BOOT] Startup marked stable after 60s");
-        }
+        LOGI("[HEARTBEAT %02d] alive", n);
+        if (n == 1) { markStartupComplete(); }
     }
     return nullptr;
 }
 
 // ================================================================
-//  PHASE 1
+//  PHASES (CheckImpact removed)
 // ================================================================
 static void installPhase1() {
     LOGI("=== PHASE 1: core hooks ===");
-    {
-        auto C = new LoadClass(OBFUSCATE("SYBO.RunnerCore.Character"), OBFUSCATE("CharacterMotor"));
-        if (C && C->thisclass) {
-            DWORD o = C->GetMethodOffsetByName(OBFUSCATE("CheckFrontalImpact"), 1);
-            if (o) HOOK_CHECK("CharacterMotor","CheckFrontalImpact",o,(void*)new_CheckFrontalImpact,old_CheckFrontalImpact);
-            else LOG_SKIP("CharacterMotor","CheckFrontalImpact");
-            o = C->GetMethodOffsetByName(OBFUSCATE("CheckSideImpact"), 1);
-            if (o) HOOK_CHECK("CharacterMotor","CheckSideImpact",o,(void*)new_CheckSideImpact,old_CheckSideImpact);
-            else LOG_SKIP("CharacterMotor","CheckSideImpact");
-        } else LOGE("[CLASS MISS] CharacterMotor");
-    }
     {
         auto C = new LoadClass(OBFUSCATE("SYBO.RunnerCore.Character"), OBFUSCATE("CharacterMotorAbilities"));
         if (C && C->thisclass) {
@@ -664,11 +607,8 @@ static void installPhase1() {
             DWORD o2 = C->GetMethodOffsetByName(OBFUSCATE("get_JumpHeight"),0);
             DWORD o3 = C->GetMethodOffsetByName(OBFUSCATE("get_LaneChangeDuration"),0);
             if (o1) HOOK_CHECK("CharacterMotorAbilities","get_JumpLimit",o1,(void*)new_get_JumpLimit,old_get_JumpLimit);
-            else LOG_SKIP("CharacterMotorAbilities","get_JumpLimit");
             if (o2) HOOK_CHECK("CharacterMotorAbilities","get_JumpHeight",o2,(void*)new_get_JumpHeight,old_get_JumpHeight);
-            else LOG_SKIP("CharacterMotorAbilities","get_JumpHeight");
             if (o3) HOOK_CHECK("CharacterMotorAbilities","get_LaneChangeDuration",o3,(void*)new_get_LaneChangeDuration,old_get_LaneChangeDuration);
-            else LOG_SKIP("CharacterMotorAbilities","get_LaneChangeDuration");
         }
     }
     {
@@ -676,7 +616,6 @@ static void installPhase1() {
         if (C && C->thisclass) {
             DWORD o = C->GetMethodOffsetByName(OBFUSCATE("IsAutoReviveEnabled"),0);
             if (o) HOOK_CHECK("StumbleBehaviour","IsAutoReviveEnabled",o,(void*)new_IsAutoReviveEnabled,old_IsAutoReviveEnabled);
-            else LOG_SKIP("StumbleBehaviour","IsAutoReviveEnabled");
         }
     }
     {
@@ -684,7 +623,6 @@ static void installPhase1() {
         if (C && C->thisclass) {
             DWORD o = C->GetMethodOffsetByName(OBFUSCATE("GetDuration"),1);
             if (o) HOOK_CHECK("PowerConfig","GetDuration",o,(void*)new_GetDuration,old_GetDuration);
-            else LOG_SKIP("PowerConfig","GetDuration");
         }
     }
     {
@@ -692,7 +630,6 @@ static void installPhase1() {
         if (C && C->thisclass) {
             DWORD o = C->GetMethodOffsetByName(OBFUSCATE("get_BaseMultiplierSum"),0);
             if (o) HOOK_CHECK("ScoreMultiplierManager","get_BaseMultiplierSum",o,(void*)new_get_BaseMultiplierSum,old_get_BaseMultiplierSum);
-            else LOG_SKIP("ScoreMultiplierManager","get_BaseMultiplierSum");
         }
     }
     {
@@ -700,7 +637,6 @@ static void installPhase1() {
         if (C && C->thisclass) {
             DWORD o = C->GetMethodOffsetByName(OBFUSCATE("get_detectCollisions"),0);
             if (o) HOOK_CHECK("CharacterController","get_detectCollisions",o,(void*)new_get_detectCollisions,old_get_detectCollisions);
-            else LOG_SKIP("CharacterController","get_detectCollisions");
         }
     }
     {
@@ -708,15 +644,11 @@ static void installPhase1() {
         if (C && C->thisclass) {
             DWORD o = C->GetMethodOffsetByName(OBFUSCATE("GetCurrency"),1);
             if (o) HOOK_CHECK("WalletModel","GetCurrency",o,(void*)new_GetCurrency,old_GetCurrency);
-            else LOG_SKIP("WalletModel","GetCurrency");
         }
     }
     LOGI("=== PHASE 1 complete ===");
 }
 
-// ================================================================
-//  PHASE 2
-// ================================================================
 static void installPhase2() {
     LOGI("=== PHASE 2: currency / gravity / movement / side-impact ===");
     {
@@ -724,7 +656,6 @@ static void installPhase2() {
         if (C && C->thisclass) {
             DWORD o = C->GetMethodOffsetByName(OBFUSCATE("get_IsIAP"),0);
             if (o) HOOK_CHECK("Currency","get_IsIAP",o,(void*)new_get_IsIAP,old_get_IsIAP);
-            else LOG_SKIP("Currency","get_IsIAP");
         }
     }
     {
@@ -734,36 +665,25 @@ static void installPhase2() {
             DWORD o2 = C->GetMethodOffsetByName(OBFUSCATE("UpdateMovement"),0);
             DWORD o3 = C->GetMethodOffsetByName(OBFUSCATE("NotifySideImpact"),3);
             if (o1) HOOK_CHECK("CharacterMotor","ApplyGravity",o1,(void*)new_ApplyGravity,old_ApplyGravity);
-            else LOG_SKIP("CharacterMotor","ApplyGravity");
             if (o2) HOOK_CHECK("CharacterMotor","UpdateMovement",o2,(void*)new_UpdateMovement,old_UpdateMovement);
-            else LOG_SKIP("CharacterMotor","UpdateMovement");
             if (o3) HOOK_CHECK("CharacterMotor","NotifySideImpact",o3,(void*)new_NotifySideImpact,old_NotifySideImpact);
-            else LOG_SKIP("CharacterMotor","NotifySideImpact");
         }
     }
     LOGI("=== PHASE 2 complete ===");
 }
 
-// ================================================================
-//  PHASE 3
-//  (OnStumble hook removed per user request — crashing candidate)
-// ================================================================
 static void installPhase3() {
-    LOGI("=== PHASE 3: camera (OnStumble disabled) ===");
+    LOGI("=== PHASE 3: camera ===");
     {
         auto C = new LoadClass(OBFUSCATE("SYBO.Subway"), OBFUSCATE("CameraGroundedModifier"));
         if (C && C->thisclass) {
             DWORD o = C->GetMethodOffsetByName(OBFUSCATE("Apply"),1);
             if (o) HOOK_CHECK("CameraGroundedModifier","Apply",o,(void*)new_CameraApply,old_CameraApply);
-            else LOG_SKIP("CameraGroundedModifier","Apply");
         }
     }
     LOGI("=== PHASE 3 complete ===");
 }
 
-// ================================================================
-//  PHASE 4
-// ================================================================
 static void installPhase4() {
     LOGI("=== PHASE 4: speed / air jump ===");
     auto C = new LoadClass(OBFUSCATE("SYBO.RunnerCore.Character"), OBFUSCATE("CharacterMotorAbilities"));
@@ -772,45 +692,32 @@ static void installPhase4() {
         DWORD o2 = C->GetMethodOffsetByName(OBFUSCATE("get_MaxSpeed"),0);
         DWORD o3 = C->GetMethodOffsetByName(OBFUSCATE("get_AirJumpHeight"),0);
         if (o1) HOOK_CHECK("CharacterMotorAbilities","get_MinSpeed",o1,(void*)new_get_MinSpeed,old_get_MinSpeed);
-        else LOG_SKIP("CharacterMotorAbilities","get_MinSpeed");
         if (o2) HOOK_CHECK("CharacterMotorAbilities","get_MaxSpeed",o2,(void*)new_get_MaxSpeed,old_get_MaxSpeed);
-        else LOG_SKIP("CharacterMotorAbilities","get_MaxSpeed");
         if (o3) HOOK_CHECK("CharacterMotorAbilities","get_AirJumpHeight",o3,(void*)new_get_AirJumpHeight,old_get_AirJumpHeight);
-        else LOG_SKIP("CharacterMotorAbilities","get_AirJumpHeight");
     }
     LOGI("=== PHASE 4 complete ===");
 }
 
-// ================================================================
-//  PHASE 5
-// ================================================================
 static void installPhase5() {
     LOGI("=== PHASE 5: character props ===");
     auto C = new LoadClass(OBFUSCATE("SYBO.Subway"), OBFUSCATE("CharacterPropsController"));
-    if (!C || !C->thisclass) { LOGE("[CLASS MISS] CharacterPropsController"); return; }
+    if (!C || !C->thisclass) return;
 
     { DWORD o = C->GetMethodOffsetByName(OBFUSCATE("ShowFlight"),2);
       if (o) HOOK_CHECK("CharacterPropsController","ShowFlight",o,(void*)new_ShowFlight,old_ShowFlight);
-      else LOG_SKIP("CharacterPropsController","ShowFlight");
-      usleep(200*1000); }
+      usleep(100*1000); }
     { DWORD o = C->GetMethodOffsetByName(OBFUSCATE("ShowPogostick"),1);
       if (o) HOOK_CHECK("CharacterPropsController","ShowPogostick",o,(void*)new_ShowPogostick,old_ShowPogostick);
-      else LOG_SKIP("CharacterPropsController","ShowPogostick");
-      usleep(200*1000); }
+      usleep(100*1000); }
     { DWORD o = C->GetMethodOffsetByName(OBFUSCATE("ShowMagnet"),1);
       if (o) HOOK_CHECK("CharacterPropsController","ShowMagnet",o,(void*)new_ShowMagnet,old_ShowMagnet);
-      else LOG_SKIP("CharacterPropsController","ShowMagnet");
-      usleep(200*1000); }
+      usleep(100*1000); }
     { DWORD o = C->GetMethodOffsetByName(OBFUSCATE("ShowHoverboard"),1);
       if (o) HOOK_CHECK("CharacterPropsController","ShowHoverboard",o,(void*)new_ShowHoverboard,old_ShowHoverboard);
-      else LOG_SKIP("CharacterPropsController","ShowHoverboard");
-      usleep(200*1000); }
+      usleep(100*1000); }
     LOGI("=== PHASE 5 complete ===");
 }
 
-// ================================================================
-//  PHASE 6
-// ================================================================
 static void installPhase6() {
     LOGI("=== PHASE 6: misc ===");
     {
@@ -818,7 +725,6 @@ static void installPhase6() {
         if (C && C->thisclass) {
             DWORD o = C->GetMethodOffsetByName(OBFUSCATE("Displace"),0);
             if (o) HOOK_CHECK("MovingTrain","Displace",o,(void*)new_Displace,old_Displace);
-            else LOG_SKIP("MovingTrain","Displace");
         }
     }
     {
@@ -827,15 +733,10 @@ static void installPhase6() {
             DWORD o = C->GetMethodOffsetByName(OBFUSCATE("Addcoins"),1);
             if (!o) o = C->GetMethodOffsetByName(OBFUSCATE("AddCoins"),1);
             if (o) HOOK_CHECK("RunSessionData","Addcoins",o,(void*)new_Addcoins,old_Addcoins);
-            else LOG_SKIP("RunSessionData","Addcoins");
-
             o = C->GetMethodOffsetByName(OBFUSCATE("AddKeys"),1);
             if (o) HOOK_CHECK("RunSessionData","AddKeys",o,(void*)new_AddKeys,old_AddKeys);
-            else LOG_SKIP("RunSessionData","AddKeys");
-
             o = C->GetMethodOffsetByName(OBFUSCATE("AddPoints"),1);
             if (o) HOOK_CHECK("RunSessionData","AddPoints",o,(void*)new_AddPoints,old_AddPoints);
-            else LOG_SKIP("RunSessionData","AddPoints");
         }
     }
     {
@@ -843,7 +744,6 @@ static void installPhase6() {
         if (C && C->thisclass) {
             DWORD o = C->GetMethodOffsetByName(OBFUSCATE("UpdatePowers"),0);
             if (o) HOOK_CHECK("CharacterPower","UpdatePowers",o,(void*)new_UpdatePowers,old_UpdatePowers);
-            else LOG_SKIP("CharacterPower","UpdatePowers");
         }
     }
     {
@@ -851,7 +751,6 @@ static void installPhase6() {
         if (C && C->thisclass) {
             DWORD o = C->GetMethodOffsetByName(OBFUSCATE("UpdatePowers"),0);
             if (o) HOOK_CHECK("MainPowerSystem","UpdatePowers",o,(void*)new_MainUpdatePowers,old_MainUpdatePowers);
-            else LOG_SKIP("MainPowerSystem","UpdatePowers");
         }
     }
     {
@@ -859,7 +758,6 @@ static void installPhase6() {
         if (C && C->thisclass) {
             DWORD o = C->GetMethodOffsetByName(OBFUSCATE("FinishFlight"),0);
             if (o) HOOK_CHECK("FlyingState","FinishFlight",o,(void*)new_FinishFlight,old_FinishFlight);
-            else LOG_SKIP("FlyingState","FinishFlight");
         }
     }
     {
@@ -867,7 +765,6 @@ static void installPhase6() {
         if (C && C->thisclass) {
             DWORD o = C->GetMethodOffsetByName(OBFUSCATE("OnRevivedWithCurrency"),0);
             if (o) HOOK_CHECK("MainReviveSystem","OnRevivedWithCurrency",o,(void*)new_OnRevivedWithCurrency,old_OnRevivedWithCurrency);
-            else LOG_SKIP("MainReviveSystem","OnRevivedWithCurrency");
         }
     }
     {
@@ -875,7 +772,6 @@ static void installPhase6() {
         if (C && C->thisclass) {
             DWORD o = C->GetMethodOffsetByName(OBFUSCATE("OnRevivedWithCurrency"),0);
             if (o) HOOK_CHECK("MockReviveSystem","OnRevivedWithCurrency",o,(void*)new_MockRevivedWithCurrency,old_MockRevivedWithCurrency);
-            else LOG_SKIP("MockReviveSystem","OnRevivedWithCurrency");
         }
     }
     {
@@ -883,7 +779,6 @@ static void installPhase6() {
         if (C && C->thisclass) {
             DWORD o = C->GetMethodOffsetByName(OBFUSCATE("HandleOnCoinsPickedUp"),0);
             if (o) HOOK_CHECK("GameScreenCoinCounter","HandleOnCoinsPickedUp",o,(void*)new_HandleCoinsPickedUp,old_HandleCoinsPickedUp);
-            else LOG_SKIP("GameScreenCoinCounter","HandleOnCoinsPickedUp");
         }
     }
     {
@@ -891,7 +786,6 @@ static void installPhase6() {
         if (C && C->thisclass) {
             DWORD o = C->GetMethodOffsetByName(OBFUSCATE("HandleOnPointsEarned"),0);
             if (o) HOOK_CHECK("GameScreenScoreCounter","HandleOnPointsEarned",o,(void*)new_HandlePointsEarned,old_HandlePointsEarned);
-            else LOG_SKIP("GameScreenScoreCounter","HandleOnPointsEarned");
         }
     }
     LOGI("=== PHASE 6 complete ===");
@@ -903,34 +797,14 @@ static void installPhase6() {
 void* hack_thread(void*) {
     g_BootStep = 3;
     LOGI(">>> hack_thread started <<<");
-    std::string libName = LIB;
-    LOGI("Waiting for %s ...", libName.c_str());
     while (!isLibraryLoaded(LIB)) sleep(1);
     sleep(3);
     g_BootStep = 4;
     LOGI(">>> library loaded <<<");
 
     g_BootStep = 5;
-    {
-        void* sym = dlsym(RTLD_DEFAULT, "il2cpp_init");
-        if (sym) {
-            Dl_info info;
-            if (dladdr(sym, &info)) LOGI("[MODULE] %s base=%p (dlsym)", info.dli_fname, info.dli_fbase);
-        } else {
-            void* base = findModuleBase("libil2cpp.so");
-            if (base) LOGI("[MODULE] libil2cpp.so base=%p (maps)", base);
-        }
-    }
-
-    if (safeModeFileExists()) {
-        LOGE("[SAFE MODE] SAFE_MODE file present. Skipping hooks. Delete: %s", g_SafeModePath.c_str());
-        g_BootStep = 14; return nullptr;
-    }
-    if (previousStartupCrashed()) {
-        LOGE("[SAFE MODE] Previous startup crashed. Skipping hooks. Delete: %s", g_StartupFlagPath.c_str());
-        unlink(g_StartupFlagPath.c_str());
-        g_BootStep = 14; return nullptr;
-    }
+    if (safeModeFileExists()) { g_BootStep = 14; return nullptr; }
+    if (previousStartupCrashed()) { unlink(g_StartupFlagPath.c_str()); g_BootStep = 14; return nullptr; }
     markStartupPending();
 
     g_BootStep = 6;  installPhase1(); usleep(500*1000);
@@ -949,14 +823,12 @@ void* hack_thread(void*) {
     pthread_create(&hb, nullptr, heartbeat_thread, nullptr);
 
     g_BootStep = 14;
-    LOGI("========================================");
     LOGI("ALL HOOKS INSTALLED — startup complete.");
-    LOGI("========================================");
     return nullptr;
 }
 
 // ================================================================
-//  JNI — FEATURE LIST  (132 removed)
+//  JNI — FEATURE LIST
 // ================================================================
 jobjectArray GetFeatureList(JNIEnv* env, jobject) {
     jobjectArray ret;
@@ -966,7 +838,6 @@ jobjectArray GetFeatureList(JNIEnv* env, jobject) {
         OBFUSCATE("802_ButtonOnOff_★★★ Ultra Max Mode"),
         OBFUSCATE("803_ButtonOnOff_↺ Reset All Features"),
         OBFUSCATE("Category_Player"),
-        OBFUSCATE("100_Toggle_No Obstacle Reaction (Frontal + Side)"),
         OBFUSCATE("102_SeekBar_Max Jump Count_0_999"),
         OBFUSCATE("103_SeekBar_Jump Height Boost_0_200"),
         OBFUSCATE("104_Toggle_Auto Revive"),
@@ -1017,18 +888,10 @@ jobjectArray GetFeatureList(JNIEnv* env, jobject) {
 }
 
 // ================================================================
-//  JNI — CHANGES  (case 132 removed)
+//  JNI — CHANGES
 // ================================================================
 void Changes(JNIEnv*, jclass, jobject, jint featNum, jstring, jint value, jlong, jboolean boolean, jstring) {
     switch (featNum) {
-        case 100:
-            g_FrontalImpact.store(boolean);
-            g_SideImpact.store(boolean);
-            break;
-        case 101:
-            g_FrontalImpact.store(boolean);
-            g_SideImpact.store(boolean);
-            break;
         case 102: g_JumpLimit.store(value);        break;
         case 103: g_JumpHeight.store(value);       break;
         case 104: g_AutoRevive.store(boolean);     break;
@@ -1043,7 +906,6 @@ void Changes(JNIEnv*, jclass, jobject, jint featNum, jstring, jint value, jlong,
         case 110: g_UnlimitedCoins.store(boolean); break;
         case 130: g_NoGravity.store(boolean);            break;
         case 131: g_NoBoundaryImpact.store(boolean);     break;
-        // case 132 (NoStumble / OnStumble) removed
         case 133: g_FreezeCharacter.store(boolean);      break;
         case 134: g_AirJumpHeight.store(value);          break;
         case 135: g_HideJetpack.store(boolean);          break;
@@ -1070,11 +932,9 @@ void Changes(JNIEnv*, jclass, jobject, jint featNum, jstring, jint value, jlong,
         case 121: enableRainbow = boolean;      break;
         case 122: enableRainbowWall = boolean;  break;
         case 800: {
-            g_FrontalImpact.store(boolean); g_SideImpact.store(boolean);
             g_AutoRevive.store(boolean);    g_UnlimitedCoins.store(boolean);
         } break;
         case 801: {
-            g_FrontalImpact.store(boolean); g_SideImpact.store(boolean);
             g_AutoRevive.store(boolean);    g_FastLaneChange.store(boolean);
             g_UnlimitedCoins.store(boolean);
             if (boolean) { g_JumpLimit.store(100); g_JumpHeight.store(50);
@@ -1083,7 +943,6 @@ void Changes(JNIEnv*, jclass, jobject, jint featNum, jstring, jint value, jlong,
                    g_PowerDuration.store(0); g_ScoreMultiplier.store(0); }
         } break;
         case 802: {
-            g_FrontalImpact.store(boolean); g_SideImpact.store(boolean);
             g_AutoRevive.store(boolean);    g_FastLaneChange.store(boolean);
             g_UnlimitedCoins.store(boolean); g_NoCollision.store(boolean);
             if (boolean) g_NoCollisionStartMs.store(nowMs());
@@ -1094,7 +953,6 @@ void Changes(JNIEnv*, jclass, jobject, jint featNum, jstring, jint value, jlong,
                    g_PowerDuration.store(0); g_ScoreMultiplier.store(0); }
         } break;
         case 803: {
-            g_FrontalImpact.store(false); g_SideImpact.store(false);
             g_AutoRevive.store(false);    g_FastLaneChange.store(false);
             g_UnlimitedCoins.store(false); g_NoCollision.store(false);
             g_NoCollisionStartMs.store(0); g_JumpLimit.store(0);
@@ -1134,7 +992,7 @@ void lib_main() {
     initLogging();
     g_BootStep = 2;
     installCrashHandler();
-    LOGI("[BOOT] Crash handler installed (chained, alarm-protected)");
+    LOGI("[BOOT] Crash handler installed");
     pthread_t ptid;
     pthread_create(&ptid, NULL, hack_thread, NULL);
 }
