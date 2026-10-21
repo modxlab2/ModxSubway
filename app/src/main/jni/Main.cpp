@@ -302,30 +302,24 @@ static bool skipHookFile(const std::string& hookName) {
 // ================================================================
 //  PROLOGUE SAFETY CHECK
 //  ------------------------------------------------------------------
-//  IMPORTANT: A64HookFunction cannot safely hook tiny functions.
-//  Its trampoline saves the first 4 instructions and then jumps
-//  back to (original + 0x10). If the function is only 4 instructions
-//  long (RET at insn 3), that jump goes PAST the function end into
-//  the next function's code → SIGILL / SIGSEGV.
+//  A64HookFunction cannot safely hook tiny functions. Its trampoline
+//  redirects the copied RET to (original + 0x10), which lands PAST
+//  the function end → SIGILL.
 //
-//  This was the root cause of the CrashLog:
-//    Fault 0x72cb5877a4 = Currency.get_IsIAP + 0x10
-//  (see Currency.get_IsIAP body: b9401008 7100291f 1a9f17e0 d65f03c0)
-//
-//  We now reject ANY function whose first 4 instructions contain RET.
+//  This was the root cause of:
+//    Signal : SIGILL
+//    Fault  : 0x72cb5877a4  (= Currency.get_IsIAP + 0x10)
 // ================================================================
 static const char* checkFunctionSafety(void* addr) {
     if (!addr) return "null-addr";
     uint32_t* code = (uint32_t*)addr;
     uint32_t w0 = code[0], w1 = code[1], w2 = code[2], w3 = code[3];
 
-    // Reject tiny functions (RET in first 4 instructions = unsafe for hooking)
     if (w0 == 0xD65F03C0) return "empty-function (RET at insn 0)";
     if (w1 == 0xD65F03C0) return "tiny-function (RET at insn 1)";
     if (w2 == 0xD65F03C0) return "tiny-function (RET at insn 2)";
     if (w3 == 0xD65F03C0) return "tiny-function (RET at insn 3)";
 
-    // Reject branches in prologue
     for (int i = 0; i < 4; i++) {
         uint32_t w = code[i];
         if ((w & 0x7C000000) == 0x14000000) return "B in prologue";
@@ -337,14 +331,16 @@ static const char* checkFunctionSafety(void* addr) {
 }
 
 // ================================================================
-//  TIME / FLAGS
+//  TIME
 // ================================================================
 static inline long long nowMs() {
     return (long long) std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::steady_clock::now().time_since_epoch()).count();
 }
 
-// Impact Hooks Removed (Causes Physics Crash)
+// ================================================================
+//  FEATURE FLAGS
+// ================================================================
 static std::atomic<int>  g_JumpLimit        {0};
 static std::atomic<int>  g_JumpHeight       {0};
 static std::atomic<bool> g_AutoRevive       {false};
@@ -355,11 +351,12 @@ static std::atomic<bool> g_NoCollision      {false};
 static std::atomic<bool> g_UnlimitedCoins   {false};
 static std::atomic<long long> g_NoCollisionStartMs{0};
 
-// NOTE: g_UnlimitedShop is kept for UI compatibility.
-//       It no longer hooks Currency.get_IsIAP (crash source — see above).
-//       Unlimited Coins (WalletModel.GetCurrency) already handles most
-//       coin-based purchases, which covers the majority of the shop.
+// Free Shipping / Unlimited Shop — via MEMORY PATCH on get_IsIAP
 static std::atomic<bool> g_UnlimitedShop       {false};
+
+// No Impact (Front + Side) — single toggle, controls two hooks
+static std::atomic<bool> g_NoImpact            {false};
+
 static std::atomic<bool> g_NoGravity           {false};
 static std::atomic<bool> g_FreezeCharacter     {false};
 static std::atomic<int>  g_CharacterSpeed      {0};
@@ -375,6 +372,7 @@ static std::atomic<int>  g_AddCoinsBonus       {0};
 static std::atomic<int>  g_AddKeysBonus        {0};
 static std::atomic<int>  g_AddScoreBonus       {0};
 static std::atomic<bool> g_UnlimitedPowerTime  {false};
+static std::atomic<bool> g_UnlimitedJettime    {false}; // (legacy, unused)
 static std::atomic<bool> g_UnlimitedJetpackTime{false};
 static std::atomic<bool> g_ReviveReward        {false};
 static std::atomic<bool> g_FreezeCoins         {false};
@@ -416,9 +414,6 @@ static std::atomic<bool> g_FreezeScore         {false};
     } \
 } while(0)
 
-#define LOG_SKIP(className, methodName) \
-    LOGE("[HOOK MISS] %s.%s — offset not found", className, methodName)
-
 // ================================================================
 //  ORIGINAL POINTERS
 // ================================================================
@@ -431,9 +426,7 @@ static int   (*old_get_BaseMultiplierSum)(void*)              = nullptr;
 static bool  (*old_get_detectCollisions)(void*)               = nullptr;
 static int   (*old_GetCurrency)(void*, int)                   = nullptr;
 
-// NOTE: old_get_IsIAP REMOVED — the A64HookFunction trampoline for this
-// 4-instruction function is broken and causes SIGILL on revive cancel.
-// See checkFunctionSafety() comment for details.
+// NOTE: No old_get_IsIAP — we use memory patch, not hook (see applyIsIAPPatch)
 
 static void   (*old_ApplyGravity)(void*)                      = nullptr;
 static float  (*old_get_MinSpeed)(void*)                      = nullptr;
@@ -442,6 +435,11 @@ static void   (*old_UpdateMovement)(void*)                    = nullptr;
 static float  (*old_get_AirJumpHeight)(void*)                 = nullptr;
 static bool   (*old_CameraApply)(void*, void*)                = nullptr;
 static void   (*old_NotifySideImpact)(void*, int, void*, void*)= nullptr;
+
+// NEW: No Impact hooks (Front + Side)
+static bool   (*old_CheckFrontalImpact)(void*, void*)         = nullptr;
+static bool   (*old_CheckSideImpact)(void*, void*)            = nullptr;
+
 static void   (*old_ShowFlight)(void*, bool, int)             = nullptr;
 static void   (*old_ShowPogostick)(void*, bool)               = nullptr;
 static void   (*old_ShowMagnet)(void*, bool)                  = nullptr;
@@ -457,6 +455,74 @@ static void   (*old_OnRevivedWithCurrency)(void*)             = nullptr;
 static void   (*old_MockRevivedWithCurrency)(void*)           = nullptr;
 static void   (*old_HandleCoinsPickedUp)(void*)               = nullptr;
 static void   (*old_HandlePointsEarned)(void*)                = nullptr;
+
+// ================================================================
+//  get_IsIAP — MEMORY PATCH STORAGE
+//  ------------------------------------------------------------------
+//  Original 4 instructions (b9401008 7100291f 1a9f17e0 d65f03c0):
+//    LDR  W8, [X0, #0x10]
+//    CMP  W8, #0xA
+//    CSET W0, EQ
+//    RET
+//
+//  Patch (MOV W0, #0; RET):
+//    0x52800000  MOV W0, #0
+//    0xD65F03C0  RET
+//
+//  Hex (little-endian): "00008052C0035FD6"
+// ================================================================
+static void*             g_IsIAPAddr = nullptr;
+static uint8_t           g_IsIAPOriginal[16] = {0};
+static std::atomic<bool> g_IsIAPOrigSaved{false};
+
+static void bytesToHex(const uint8_t* bytes, size_t len, char* out) {
+    static const char hex[] = "0123456789ABCDEF";
+    for (size_t i = 0; i < len; i++) {
+        out[i*2]     = hex[(bytes[i] >> 4) & 0xF];
+        out[i*2 + 1] = hex[bytes[i] & 0xF];
+    }
+    out[len*2] = '\0';
+}
+
+// Apply or revert the get_IsIAP → return false patch.
+// Safe to call any time (falls through if address not captured yet).
+static void applyIsIAPPatch(bool enable) {
+    if (!g_IsIAPAddr) {
+        // Address not captured yet — installPhase2 will re-apply if toggle is on.
+        LOGW("[PATCH DEFER] get_IsIAP address not ready (enable=%d)", (int)enable);
+        return;
+    }
+    if (!g_IsIAPOrigSaved.load()) {
+        LOGE("[PATCH FAIL] get_IsIAP original bytes not saved");
+        return;
+    }
+
+    if (enable) {
+        // MOV W0, #0; RET
+        MemoryPatch patch = MemoryPatch::createWithHex(g_IsIAPAddr, "00008052C0035FD6");
+        if (patch.isValid()) {
+            patch.Modify();
+            uint32_t* c = (uint32_t*)g_IsIAPAddr;
+            if (c[0] == 0x52800000) {
+                LOGI("[PATCH OK] get_IsIAP -> return false (verified)");
+            } else {
+                LOGE("[PATCH WARN] get_IsIAP verify failed: got 0x%08x", c[0]);
+            }
+        } else {
+            LOGE("[PATCH FAIL] get_IsIAP enable (patch invalid)");
+        }
+    } else {
+        char hex[33];
+        bytesToHex(g_IsIAPOriginal, 16, hex);
+        MemoryPatch patch = MemoryPatch::createWithHex(g_IsIAPAddr, hex);
+        if (patch.isValid()) {
+            patch.Modify();
+            LOGI("[PATCH OK] get_IsIAP -> restored original");
+        } else {
+            LOGE("[PATCH FAIL] get_IsIAP restore (patch invalid)");
+        }
+    }
+}
 
 // ================================================================
 //  HOOK IMPLEMENTATIONS
@@ -502,7 +568,23 @@ static int new_GetCurrency(void* s, int t) {
     return old_GetCurrency ? old_GetCurrency(s, t) : 0;
 }
 
-// NOTE: new_get_IsIAP REMOVED — see old_get_IsIAP note above.
+// ---- No Impact (Front + Side) ----
+static bool new_CheckFrontalImpact(void* s, void* hit) {
+    if (g_NoImpact.load()) {
+        TRACE_CALL("CharacterMotor.CheckFrontalImpact");
+        TRACE_EXIT("CharacterMotor.CheckFrontalImpact");
+        return false;
+    }
+    return old_CheckFrontalImpact ? old_CheckFrontalImpact(s, hit) : true;
+}
+static bool new_CheckSideImpact(void* s, void* hit) {
+    if (g_NoImpact.load()) {
+        TRACE_CALL("CharacterMotor.CheckSideImpact");
+        TRACE_EXIT("CharacterMotor.CheckSideImpact");
+        return false;
+    }
+    return old_CheckSideImpact ? old_CheckSideImpact(s, hit) : true;
+}
 
 static void new_ApplyGravity(void* s) {
     if (g_NoGravity.load()) { TRACE_CALL("CharacterMotor.ApplyGravity"); TRACE_EXIT("CharacterMotor.ApplyGravity"); return; }
@@ -672,29 +754,50 @@ static void installPhase1() {
 }
 
 static void installPhase2() {
-    LOGI("=== PHASE 2: gravity / movement / side-impact ===");
+    LOGI("=== PHASE 2: currency / gravity / movement / impact ===");
+
     // ================================================================
-    // NOTE: Currency.get_IsIAP hook REMOVED on purpose.
+    //  Currency.get_IsIAP — CAPTURE ADDRESS (do NOT hook!)
     //
-    // The function is only 4 ARM64 instructions:
-    //   b9401008  LDR   W8, [X0, #0x10]
-    //   7100291f  CMP   W8, #0xA
-    //   1a9f17e0  CSET  W0, EQ
-    //   d65f03c0  RET
+    //  This function is only 4 instructions long:
+    //    b9401008  LDR  W8, [X0, #0x10]
+    //    7100291f  CMP  W8, #0xA
+    //    1a9f17e0  CSET W0, EQ
+    //    d65f03c0  RET
     //
-    // A64HookFunction's trampoline unconditionally jumps to
-    // (original + 0x10) after replaying 4 saved instructions. Since
-    // 0x10 == the end of the function, that jump lands in the next
-    // function's prologue → SIGILL crash on the very first call.
-    //
-    // CrashLog confirmed:
-    //   Signal : SIGILL
-    //   Fault  : 0x72cb5877a4   (= get_IsIAP (0x72cb587794) + 0x10)
-    //
-    // The “Unlimited Shop” toggle remains in the UI for compatibility,
-    // but it no longer hooks anything. Most shop items are coin-based,
-    // and “Unlimited Coins” (WalletModel.GetCurrency) already unlocks
-    // them. Real-money IAP items stay locked — which is fine.
+    //  A64HookFunction's trampoline unconditionally jumps to
+    //  (original + 0x10) after replaying 4 saved instructions — but
+    //  +0x10 == end-of-function → SIGILL. We therefore use a
+    //  MemoryPatch on the FIRST 8 bytes only, applied on toggle.
+    // ================================================================
+    {
+        auto C = new LoadClass(OBFUSCATE("SYBO.Subway.Core.CommonData"), OBFUSCATE("Currency"));
+        if (C && C->thisclass) {
+            DWORD o = C->GetMethodOffsetByName(OBFUSCATE("get_IsIAP"), 0);
+            if (o) {
+                g_IsIAPAddr = (void*)(uintptr_t)o;
+                memcpy(g_IsIAPOriginal, g_IsIAPAddr, 16);
+                g_IsIAPOrigSaved.store(true);
+                uint32_t* c = (uint32_t*)g_IsIAPAddr;
+                LOGI("[CAPTURE] get_IsIAP @ %p  [%08x %08x %08x %08x]",
+                     g_IsIAPAddr, c[0], c[1], c[2], c[3]);
+
+                // If toggle was ON before Phase 2, apply now.
+                if (g_UnlimitedShop.load()) {
+                    LOGI("[PATCH] Deferred apply (toggle was ON before Phase 2)");
+                    applyIsIAPPatch(true);
+                }
+            } else {
+                LOGE("[MISS] Currency.get_IsIAP offset not found");
+            }
+        } else {
+            LOGE("[MISS] Currency class not found");
+        }
+    }
+
+    // ================================================================
+    //  CharacterMotor — gravity / movement / side notification
+    //                   + NEW: CheckFrontalImpact / CheckSideImpact
     // ================================================================
     {
         auto C = new LoadClass(OBFUSCATE("SYBO.RunnerCore.Character"), OBFUSCATE("CharacterMotor"));
@@ -702,9 +805,14 @@ static void installPhase2() {
             DWORD o1 = C->GetMethodOffsetByName(OBFUSCATE("ApplyGravity"),0);
             DWORD o2 = C->GetMethodOffsetByName(OBFUSCATE("UpdateMovement"),0);
             DWORD o3 = C->GetMethodOffsetByName(OBFUSCATE("NotifySideImpact"),3);
+            DWORD o4 = C->GetMethodOffsetByName(OBFUSCATE("CheckFrontalImpact"),1);
+            DWORD o5 = C->GetMethodOffsetByName(OBFUSCATE("CheckSideImpact"),1);
+
             if (o1) HOOK_CHECK("CharacterMotor","ApplyGravity",o1,(void*)new_ApplyGravity,old_ApplyGravity);
             if (o2) HOOK_CHECK("CharacterMotor","UpdateMovement",o2,(void*)new_UpdateMovement,old_UpdateMovement);
             if (o3) HOOK_CHECK("CharacterMotor","NotifySideImpact",o3,(void*)new_NotifySideImpact,old_NotifySideImpact);
+            if (o4) HOOK_CHECK("CharacterMotor","CheckFrontalImpact",o4,(void*)new_CheckFrontalImpact,old_CheckFrontalImpact);
+            if (o5) HOOK_CHECK("CharacterMotor","CheckSideImpact",o5,(void*)new_CheckSideImpact,old_CheckSideImpact);
         }
     }
     LOGI("=== PHASE 2 complete ===");
@@ -729,8 +837,6 @@ static void installPhase4() {
         DWORD o1 = C->GetMethodOffsetByName(OBFUSCATE("get_MinSpeed"),0);
         DWORD o2 = C->GetMethodOffsetByName(OBFUSCATE("get_MaxSpeed"),0);
         DWORD o3 = C->GetMethodOffsetByName(OBFUSCATE("get_AirJumpHeight"),0);
-        // get_MinSpeed / get_MaxSpeed have RET at insn 1 → will be skipped
-        // safely by checkFunctionSafety().
         if (o1) HOOK_CHECK("CharacterMotorAbilities","get_MinSpeed",o1,(void*)new_get_MinSpeed,old_get_MinSpeed);
         if (o2) HOOK_CHECK("CharacterMotorAbilities","get_MaxSpeed",o2,(void*)new_get_MaxSpeed,old_get_MaxSpeed);
         if (o3) HOOK_CHECK("CharacterMotorAbilities","get_AirJumpHeight",o3,(void*)new_get_AirJumpHeight,old_get_AirJumpHeight);
@@ -901,6 +1007,7 @@ jobjectArray GetFeatureList(JNIEnv* env, jobject) {
         OBFUSCATE("144_Toggle_Freeze Score Counter"),
         OBFUSCATE("Category_Collision"),
         OBFUSCATE("108_Toggle_God Mode (No Collision Detect)"),
+        OBFUSCATE("132_Toggle_No Impact (Front + Side)"),
         OBFUSCATE("Category_Shop"),
         OBFUSCATE("110_Toggle_Unlimited Coins"),
         OBFUSCATE("150_Toggle_Unlock All Shop Items (Free IAP)"),
@@ -944,6 +1051,10 @@ void Changes(JNIEnv*, jclass, jobject, jint featNum, jstring, jint value, jlong,
             else g_NoCollisionStartMs.store(0);
         } break;
         case 110: g_UnlimitedCoins.store(boolean); break;
+
+        // ---- NEW: No Impact (Front + Side) ----
+        case 132: g_NoImpact.store(boolean);       break;
+
         case 130: g_NoGravity.store(boolean);            break;
         case 131: g_NoBoundaryImpact.store(boolean);     break;
         case 133: g_FreezeCharacter.store(boolean);      break;
@@ -957,7 +1068,13 @@ void Changes(JNIEnv*, jclass, jobject, jint featNum, jstring, jint value, jlong,
         case 142: g_StopTrains.store(boolean);           break;
         case 143: g_FreezeCoins.store(boolean);          break;
         case 144: g_FreezeScore.store(boolean);          break;
-        case 150: g_UnlimitedShop.store(boolean);        break; // no-op now (see Phase 2 note)
+
+        // ---- Unlimited Shop (Free IAP) — MEMORY PATCH ----
+        case 150: {
+            g_UnlimitedShop.store(boolean);
+            applyIsIAPPatch(boolean);
+        } break;
+
         case 151: g_AddCoinsBonus.store(value);          break;
         case 152: g_AddKeysBonus.store(value);           break;
         case 153: g_AddScoreBonus.store(value);          break;
@@ -998,6 +1115,7 @@ void Changes(JNIEnv*, jclass, jobject, jint featNum, jstring, jint value, jlong,
             g_NoCollisionStartMs.store(0); g_JumpLimit.store(0);
             g_JumpHeight.store(0); g_PowerDuration.store(0);
             g_ScoreMultiplier.store(0);
+            g_NoImpact.store(false);   // NEW: reset impact toggle too
             g_NoGravity.store(false); g_FreezeCharacter.store(false);
             g_CharacterSpeed.store(0); g_AirJumpHeight.store(0);
             g_CameraMode.store(0); g_NoBoundaryImpact.store(false);
@@ -1008,7 +1126,11 @@ void Changes(JNIEnv*, jclass, jobject, jint featNum, jstring, jint value, jlong,
             g_AddScoreBonus.store(0); g_UnlimitedPowerTime.store(false);
             g_UnlimitedJetpackTime.store(false); g_ReviveReward.store(false);
             g_FreezeCoins.store(false); g_FreezeScore.store(false);
-            g_UnlimitedShop.store(false);
+            // NOTE: g_UnlimitedShop reset requires patch revert.
+            if (g_UnlimitedShop.load()) {
+                g_UnlimitedShop.store(false);
+                applyIsIAPPatch(false);
+            }
         } break;
         default: break;
     }
