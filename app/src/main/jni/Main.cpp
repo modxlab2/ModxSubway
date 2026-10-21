@@ -263,7 +263,7 @@ static void installCrashHandler() {
 static void initLogging() {
     g_LogDir = findLogDir();
     if (g_LogDir.empty()) return;
-    
+
     std::string mainPath  = g_LogDir + "/modxlab.log";
     std::string crashPath = g_LogDir + "/modxlab_crash.log";
 
@@ -306,7 +306,7 @@ static bool skipHookFile(const std::string& hookName) {
 //  redirects the copied RET to (original + 0x10), which lands PAST
 //  the function end → SIGILL.
 //
-//  This was the root cause of:
+//  This was the root cause of the past crash:
 //    Signal : SIGILL
 //    Fault  : 0x72cb5877a4  (= Currency.get_IsIAP + 0x10)
 // ================================================================
@@ -372,7 +372,6 @@ static std::atomic<int>  g_AddCoinsBonus       {0};
 static std::atomic<int>  g_AddKeysBonus        {0};
 static std::atomic<int>  g_AddScoreBonus       {0};
 static std::atomic<bool> g_UnlimitedPowerTime  {false};
-static std::atomic<bool> g_UnlimitedJettime    {false}; // (legacy, unused)
 static std::atomic<bool> g_UnlimitedJetpackTime{false};
 static std::atomic<bool> g_ReviveReward        {false};
 static std::atomic<bool> g_FreezeCoins         {false};
@@ -488,7 +487,6 @@ static void bytesToHex(const uint8_t* bytes, size_t len, char* out) {
 // Safe to call any time (falls through if address not captured yet).
 static void applyIsIAPPatch(bool enable) {
     if (!g_IsIAPAddr) {
-        // Address not captured yet — installPhase2 will re-apply if toggle is on.
         LOGW("[PATCH DEFER] get_IsIAP address not ready (enable=%d)", (int)enable);
         return;
     }
@@ -497,9 +495,13 @@ static void applyIsIAPPatch(bool enable) {
         return;
     }
 
+    // ★ FIX: void* → uintptr_t explicit cast (required by MemoryPatch API)
+    const uintptr_t patchAddr = (uintptr_t)g_IsIAPAddr;
+
     if (enable) {
-        // MOV W0, #0; RET
-        MemoryPatch patch = MemoryPatch::createWithHex(g_IsIAPAddr, "00008052C0035FD6");
+        // MOV W0, #0; RET   (little-endian hex)
+        MemoryPatch patch = MemoryPatch::createWithHex(
+                patchAddr, std::string("00008052C0035FD6"));
         if (patch.isValid()) {
             patch.Modify();
             uint32_t* c = (uint32_t*)g_IsIAPAddr;
@@ -514,7 +516,8 @@ static void applyIsIAPPatch(bool enable) {
     } else {
         char hex[33];
         bytesToHex(g_IsIAPOriginal, 16, hex);
-        MemoryPatch patch = MemoryPatch::createWithHex(g_IsIAPAddr, hex);
+        MemoryPatch patch = MemoryPatch::createWithHex(
+                patchAddr, std::string(hex));
         if (patch.isValid()) {
             patch.Modify();
             LOGI("[PATCH OK] get_IsIAP -> restored original");
@@ -758,17 +761,7 @@ static void installPhase2() {
 
     // ================================================================
     //  Currency.get_IsIAP — CAPTURE ADDRESS (do NOT hook!)
-    //
-    //  This function is only 4 instructions long:
-    //    b9401008  LDR  W8, [X0, #0x10]
-    //    7100291f  CMP  W8, #0xA
-    //    1a9f17e0  CSET W0, EQ
-    //    d65f03c0  RET
-    //
-    //  A64HookFunction's trampoline unconditionally jumps to
-    //  (original + 0x10) after replaying 4 saved instructions — but
-    //  +0x10 == end-of-function → SIGILL. We therefore use a
-    //  MemoryPatch on the FIRST 8 bytes only, applied on toggle.
+    //  See checkFunctionSafety() comment for why.
     // ================================================================
     {
         auto C = new LoadClass(OBFUSCATE("SYBO.Subway.Core.CommonData"), OBFUSCATE("Currency"));
@@ -782,7 +775,6 @@ static void installPhase2() {
                 LOGI("[CAPTURE] get_IsIAP @ %p  [%08x %08x %08x %08x]",
                      g_IsIAPAddr, c[0], c[1], c[2], c[3]);
 
-                // If toggle was ON before Phase 2, apply now.
                 if (g_UnlimitedShop.load()) {
                     LOGI("[PATCH] Deferred apply (toggle was ON before Phase 2)");
                     applyIsIAPPatch(true);
@@ -1115,7 +1107,7 @@ void Changes(JNIEnv*, jclass, jobject, jint featNum, jstring, jint value, jlong,
             g_NoCollisionStartMs.store(0); g_JumpLimit.store(0);
             g_JumpHeight.store(0); g_PowerDuration.store(0);
             g_ScoreMultiplier.store(0);
-            g_NoImpact.store(false);   // NEW: reset impact toggle too
+            g_NoImpact.store(false);   // reset impact toggle too
             g_NoGravity.store(false); g_FreezeCharacter.store(false);
             g_CharacterSpeed.store(0); g_AirJumpHeight.store(0);
             g_CameraMode.store(0); g_NoBoundaryImpact.store(false);
@@ -1126,7 +1118,7 @@ void Changes(JNIEnv*, jclass, jobject, jint featNum, jstring, jint value, jlong,
             g_AddScoreBonus.store(0); g_UnlimitedPowerTime.store(false);
             g_UnlimitedJetpackTime.store(false); g_ReviveReward.store(false);
             g_FreezeCoins.store(false); g_FreezeScore.store(false);
-            // NOTE: g_UnlimitedShop reset requires patch revert.
+            // Also revert the IAP patch if it's currently active
             if (g_UnlimitedShop.load()) {
                 g_UnlimitedShop.store(false);
                 applyIsIAPPatch(false);
