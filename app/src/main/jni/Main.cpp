@@ -326,7 +326,7 @@ static bool skipHookFile(const std::string& hookName) {
 }
 
 // ================================================================
-//  PROLOGUE SAFETY CHECK
+//  PROLOGUE SAFETY CHECK (Allows CBZ/CBNZ)
 // ================================================================
 static const char* checkFunctionSafety(void* addr) {
     if (!addr) return "null-addr";
@@ -338,12 +338,11 @@ static const char* checkFunctionSafety(void* addr) {
 
     for (int i = 0; i < 4; i++) {
         uint32_t w = code[i];
+        // Only block absolute branches, let CBZ/CBNZ/TBZ/TBNZ pass through so hooks work
         if ((w & 0x7C000000) == 0x14000000) return "B in prologue";
         if ((w & 0x7C000000) == 0x94000000) return "BL in prologue";
         if ((w & 0xFFFF0000) == 0xD61F0000) return "BR in prologue";
         if ((w & 0xFFFF0000) == 0xD63F0000) return "BLR in prologue";
-        if ((w & 0x7E000000) == 0x34000000) return "CBZ/CBNZ in prologue";
-        if ((w & 0x7E000000) == 0x36000000) return "TBZ/TBNZ in prologue";
     }
     return nullptr;
 }
@@ -469,224 +468,167 @@ static void   (*old_HandleCoinsPickedUp)(void*)               = nullptr;
 static void   (*old_HandlePointsEarned)(void*)                = nullptr;
 
 // ================================================================
-//  HOOK IMPLEMENTATIONS
+//  HOOK IMPLEMENTATIONS (Silent Pass-through on Toggle OFF)
 // ================================================================
 static bool new_CheckFrontalImpact(void* s, void* o) {
-    TRACE_CALL("CharacterMotor.CheckFrontalImpact");
-    bool r = (!s || g_FrontalImpact.load()) ? false
-           : (old_CheckFrontalImpact ? old_CheckFrontalImpact(s, o) : false);
-    TRACE_EXIT("CharacterMotor.CheckFrontalImpact"); return r;
+    if (g_FrontalImpact.load()) { TRACE_CALL("CharacterMotor.CheckFrontalImpact"); TRACE_EXIT("CharacterMotor.CheckFrontalImpact"); return false; }
+    return old_CheckFrontalImpact ? old_CheckFrontalImpact(s, o) : false;
 }
 static bool new_CheckSideImpact(void* s, void* o) {
-    TRACE_CALL("CharacterMotor.CheckSideImpact");
-    bool r = (!s || g_SideImpact.load()) ? false
-           : (old_CheckSideImpact ? old_CheckSideImpact(s, o) : false);
-    TRACE_EXIT("CharacterMotor.CheckSideImpact"); return r;
+    if (g_SideImpact.load()) { TRACE_CALL("CharacterMotor.CheckSideImpact"); TRACE_EXIT("CharacterMotor.CheckSideImpact"); return false; }
+    return old_CheckSideImpact ? old_CheckSideImpact(s, o) : false;
 }
 static int new_get_JumpLimit(void* s) {
-    TRACE_CALL("CharacterMotorAbilities.get_JumpLimit");
     int v = g_JumpLimit.load();
-    int r = (v > 0) ? v : (old_get_JumpLimit ? old_get_JumpLimit(s) : 0);
-    TRACE_EXIT("CharacterMotorAbilities.get_JumpLimit"); return r;
+    if (v > 0) { TRACE_CALL("CharacterMotorAbilities.get_JumpLimit"); TRACE_EXIT("CharacterMotorAbilities.get_JumpLimit"); return v; }
+    return old_get_JumpLimit ? old_get_JumpLimit(s) : 0;
 }
 static float new_get_JumpHeight(void* s) {
-    TRACE_CALL("CharacterMotorAbilities.get_JumpHeight");
     int v = g_JumpHeight.load();
-    float r = (v > 0) ? (float)v : (old_get_JumpHeight ? old_get_JumpHeight(s) : 0.0f);
-    TRACE_EXIT("CharacterMotorAbilities.get_JumpHeight"); return r;
+    if (v > 0) { TRACE_CALL("CharacterMotorAbilities.get_JumpHeight"); TRACE_EXIT("CharacterMotorAbilities.get_JumpHeight"); return (float)v; }
+    return old_get_JumpHeight ? old_get_JumpHeight(s) : 0.0f;
 }
 static float new_get_LaneChangeDuration(void* s) {
-    TRACE_CALL("CharacterMotorAbilities.get_LaneChangeDuration");
-    float r = g_FastLaneChange.load() ? 0.0f
-            : (old_get_LaneChangeDuration ? old_get_LaneChangeDuration(s) : 0.0f);
-    TRACE_EXIT("CharacterMotorAbilities.get_LaneChangeDuration"); return r;
+    if (g_FastLaneChange.load()) { TRACE_CALL("CharacterMotorAbilities.get_LaneChangeDuration"); TRACE_EXIT("CharacterMotorAbilities.get_LaneChangeDuration"); return 0.0f; }
+    return old_get_LaneChangeDuration ? old_get_LaneChangeDuration(s) : 0.0f;
 }
 static bool new_IsAutoReviveEnabled(void* s) {
-    TRACE_CALL("StumbleBehaviour.IsAutoReviveEnabled");
-    bool r = g_AutoRevive.load() ? true
-           : (old_IsAutoReviveEnabled ? old_IsAutoReviveEnabled(s) : false);
-    TRACE_EXIT("StumbleBehaviour.IsAutoReviveEnabled"); return r;
+    if (g_AutoRevive.load()) { TRACE_CALL("StumbleBehaviour.IsAutoReviveEnabled"); TRACE_EXIT("StumbleBehaviour.IsAutoReviveEnabled"); return true; }
+    return old_IsAutoReviveEnabled ? old_IsAutoReviveEnabled(s) : false;
 }
 static float new_GetDuration(void* s, void* cfg) {
-    TRACE_CALL("PowerConfig.GetDuration");
     int v = g_PowerDuration.load();
-    float r = (v > 0) ? (float)v : (old_GetDuration ? old_GetDuration(s, cfg) : 0.0f);
-    TRACE_EXIT("PowerConfig.GetDuration"); return r;
+    if (v > 0) { TRACE_CALL("PowerConfig.GetDuration"); TRACE_EXIT("PowerConfig.GetDuration"); return (float)v; }
+    return old_GetDuration ? old_GetDuration(s, cfg) : 0.0f;
 }
 static int new_get_BaseMultiplierSum(void* s) {
-    TRACE_CALL("ScoreMultiplierManager.get_BaseMultiplierSum");
     int v = g_ScoreMultiplier.load();
-    int r = (v > 0) ? v : (old_get_BaseMultiplierSum ? old_get_BaseMultiplierSum(s) : 0);
-    TRACE_EXIT("ScoreMultiplierManager.get_BaseMultiplierSum"); return r;
+    if (v > 0) { TRACE_CALL("ScoreMultiplierManager.get_BaseMultiplierSum"); TRACE_EXIT("ScoreMultiplierManager.get_BaseMultiplierSum"); return v; }
+    return old_get_BaseMultiplierSum ? old_get_BaseMultiplierSum(s) : 0;
 }
 static bool new_get_detectCollisions(void* s) {
-    TRACE_CALL("CharacterController.get_detectCollisions");
-    bool r = true;
     if (g_NoCollision.load()) {
+        TRACE_CALL("CharacterController.get_detectCollisions"); TRACE_EXIT("CharacterController.get_detectCollisions");
         long long st = g_NoCollisionStartMs.load();
-        if (st > 0 && (nowMs() - st) < 1000) r = false;
-        else r = old_get_detectCollisions ? old_get_detectCollisions(s) : true;
-    } else r = old_get_detectCollisions ? old_get_detectCollisions(s) : true;
-    TRACE_EXIT("CharacterController.get_detectCollisions"); return r;
+        if (st > 0 && (nowMs() - st) < 1000) return false;
+    }
+    return old_get_detectCollisions ? old_get_detectCollisions(s) : true;
 }
 static int new_GetCurrency(void* s, int t) {
-    TRACE_CALL("WalletModel.GetCurrency");
-    int r = g_UnlimitedCoins.load() ? 99999999
-          : (old_GetCurrency ? old_GetCurrency(s, t) : 0);
-    TRACE_EXIT("WalletModel.GetCurrency"); return r;
+    if (g_UnlimitedCoins.load()) { TRACE_CALL("WalletModel.GetCurrency"); TRACE_EXIT("WalletModel.GetCurrency"); return 99999999; }
+    return old_GetCurrency ? old_GetCurrency(s, t) : 0;
 }
 static bool new_get_IsIAP(void* s) {
-    TRACE_CALL("Currency.get_IsIAP");
-    bool r = g_UnlimitedShop.load() ? false
-           : (old_get_IsIAP ? old_get_IsIAP(s) : false);
-    TRACE_EXIT("Currency.get_IsIAP"); return r;
+    if (g_UnlimitedShop.load()) { TRACE_CALL("Currency.get_IsIAP"); TRACE_EXIT("Currency.get_IsIAP"); return false; }
+    return old_get_IsIAP ? old_get_IsIAP(s) : false;
 }
 static void new_ApplyGravity(void* s) {
-    TRACE_CALL("CharacterMotor.ApplyGravity");
-    if (!g_NoGravity.load() && old_ApplyGravity) old_ApplyGravity(s);
-    TRACE_EXIT("CharacterMotor.ApplyGravity");
+    if (g_NoGravity.load()) { TRACE_CALL("CharacterMotor.ApplyGravity"); TRACE_EXIT("CharacterMotor.ApplyGravity"); return; }
+    if (old_ApplyGravity) old_ApplyGravity(s);
 }
 static float new_get_MinSpeed(void* s) {
-    TRACE_CALL("CharacterMotorAbilities.get_MinSpeed");
     int v = g_CharacterSpeed.load();
-    float r = (v > 0) ? (float)v : (old_get_MinSpeed ? old_get_MinSpeed(s) : 0.0f);
-    TRACE_EXIT("CharacterMotorAbilities.get_MinSpeed"); return r;
+    if (v > 0) { TRACE_CALL("CharacterMotorAbilities.get_MinSpeed"); TRACE_EXIT("CharacterMotorAbilities.get_MinSpeed"); return (float)v; }
+    return old_get_MinSpeed ? old_get_MinSpeed(s) : 0.0f;
 }
 static float new_get_MaxSpeed(void* s) {
-    TRACE_CALL("CharacterMotorAbilities.get_MaxSpeed");
     int v = g_CharacterSpeed.load();
-    float r = (v > 0) ? (float)v : (old_get_MaxSpeed ? old_get_MaxSpeed(s) : 0.0f);
-    TRACE_EXIT("CharacterMotorAbilities.get_MaxSpeed"); return r;
+    if (v > 0) { TRACE_CALL("CharacterMotorAbilities.get_MaxSpeed"); TRACE_EXIT("CharacterMotorAbilities.get_MaxSpeed"); return (float)v; }
+    return old_get_MaxSpeed ? old_get_MaxSpeed(s) : 0.0f;
 }
 static void new_UpdateMovement(void* s) {
-    TRACE_CALL("CharacterMotor.UpdateMovement");
-    if (!g_FreezeCharacter.load() && old_UpdateMovement) old_UpdateMovement(s);
-    TRACE_EXIT("CharacterMotor.UpdateMovement");
+    if (g_FreezeCharacter.load()) { TRACE_CALL("CharacterMotor.UpdateMovement"); TRACE_EXIT("CharacterMotor.UpdateMovement"); return; }
+    if (old_UpdateMovement) old_UpdateMovement(s);
 }
 static float new_get_AirJumpHeight(void* s) {
-    TRACE_CALL("CharacterMotorAbilities.get_AirJumpHeight");
     int v = g_AirJumpHeight.load();
-    float r = (v > 0) ? (float)v : (old_get_AirJumpHeight ? old_get_AirJumpHeight(s) : 0.0f);
-    TRACE_EXIT("CharacterMotorAbilities.get_AirJumpHeight"); return r;
+    if (v > 0) { TRACE_CALL("CharacterMotorAbilities.get_AirJumpHeight"); TRACE_EXIT("CharacterMotorAbilities.get_AirJumpHeight"); return (float)v; }
+    return old_get_AirJumpHeight ? old_get_AirJumpHeight(s) : 0.0f;
 }
 static bool new_CameraApply(void* s, void* c) {
-    TRACE_CALL("CameraGroundedModifier.Apply");
     int m = g_CameraMode.load();
-    bool r = (m == 1) ? true : (m == 2) ? false
-           : (old_CameraApply ? old_CameraApply(s, c) : false);
-    TRACE_EXIT("CameraGroundedModifier.Apply"); return r;
+    if (m == 1) { TRACE_CALL("CameraGroundedModifier.Apply"); TRACE_EXIT("CameraGroundedModifier.Apply"); return true; }
+    if (m == 2) { TRACE_CALL("CameraGroundedModifier.Apply"); TRACE_EXIT("CameraGroundedModifier.Apply"); return false; }
+    return old_CameraApply ? old_CameraApply(s, c) : false;
 }
 
-// ★ FIXED: NotifySideImpact is the only installed hook that fires on side hits.
-// CheckSideImpact hook is SKIPPED (CBZ prologue) so g_SideImpact had no consumer.
-// Now gating NotifySideImpact on BOTH g_NoBoundaryImpact (feature 131) AND
-// g_SideImpact (feature 100) so "No Obstacle Reaction" truly blocks side damage.
+// ★ Side impact is fully blocked if Feature 100 OR 131 is on
 static void new_NotifySideImpact(void* s, int h, void* e, void* ent) {
-    TRACE_CALL("CharacterMotor.NotifySideImpact");
-    bool suppress = g_NoBoundaryImpact.load() || g_SideImpact.load();
-    if (_myCall <= 3) {
-        LOGI("[SIDEIMPACT] h=%d suppress=%d (boundary=%d side=%d)",
-             h, (int)suppress,
-             (int)g_NoBoundaryImpact.load(), (int)g_SideImpact.load());
+    if (g_NoBoundaryImpact.load() || g_SideImpact.load()) {
+        TRACE_CALL("CharacterMotor.NotifySideImpact"); TRACE_EXIT("CharacterMotor.NotifySideImpact");
+        return;
     }
-    if (!suppress && old_NotifySideImpact) {
-        old_NotifySideImpact(s, h, e, ent);
-    }
-    TRACE_EXIT("CharacterMotor.NotifySideImpact");
+    if (old_NotifySideImpact) old_NotifySideImpact(s, h, e, ent);
 }
 
 static void new_OnStumble(void* s, int dc) {
-    TRACE_CALL("RunProgressOrderIndicator.OnStumble");
-    if (!g_NoStumble.load() && old_OnStumble) old_OnStumble(s, dc);
-    TRACE_EXIT("RunProgressOrderIndicator.OnStumble");
+    if (g_NoStumble.load()) { TRACE_CALL("RunProgressOrderIndicator.OnStumble"); TRACE_EXIT("RunProgressOrderIndicator.OnStumble"); return; }
+    if (old_OnStumble) old_OnStumble(s, dc);
 }
 static void new_ShowFlight(void* s, bool sh, int m) {
-    TRACE_CALL("CharacterPropsController.ShowFlight");
-    if (!g_HideJetpack.load() && old_ShowFlight) old_ShowFlight(s, sh, m);
-    TRACE_EXIT("CharacterPropsController.ShowFlight");
+    if (g_HideJetpack.load()) { TRACE_CALL("CharacterPropsController.ShowFlight"); TRACE_EXIT("CharacterPropsController.ShowFlight"); return; }
+    if (old_ShowFlight) old_ShowFlight(s, sh, m);
 }
 static void new_ShowPogostick(void* s, bool sh) {
-    TRACE_CALL("CharacterPropsController.ShowPogostick");
-    if (!g_HidePogostick.load() && old_ShowPogostick) old_ShowPogostick(s, sh);
-    TRACE_EXIT("CharacterPropsController.ShowPogostick");
+    if (g_HidePogostick.load()) { TRACE_CALL("CharacterPropsController.ShowPogostick"); TRACE_EXIT("CharacterPropsController.ShowPogostick"); return; }
+    if (old_ShowPogostick) old_ShowPogostick(s, sh);
 }
 static void new_ShowMagnet(void* s, bool sh) {
-    TRACE_CALL("CharacterPropsController.ShowMagnet");
-    if (!g_HideMagnet.load() && old_ShowMagnet) old_ShowMagnet(s, sh);
-    TRACE_EXIT("CharacterPropsController.ShowMagnet");
+    if (g_HideMagnet.load()) { TRACE_CALL("CharacterPropsController.ShowMagnet"); TRACE_EXIT("CharacterPropsController.ShowMagnet"); return; }
+    if (old_ShowMagnet) old_ShowMagnet(s, sh);
 }
 static void new_ShowHoverboard(void* s, bool rb) {
-    TRACE_CALL("CharacterPropsController.ShowHoverboard");
-    if (!g_HideHoverboard.load() && old_ShowHoverboard) old_ShowHoverboard(s, rb);
-    TRACE_EXIT("CharacterPropsController.ShowHoverboard");
+    if (g_HideHoverboard.load()) { TRACE_CALL("CharacterPropsController.ShowHoverboard"); TRACE_EXIT("CharacterPropsController.ShowHoverboard"); return; }
+    if (old_ShowHoverboard) old_ShowHoverboard(s, rb);
 }
 static void new_Displace(void* s) {
-    TRACE_CALL("MovingTrain.Displace");
-    if (!g_StopTrains.load() && old_Displace) old_Displace(s);
-    TRACE_EXIT("MovingTrain.Displace");
+    if (g_StopTrains.load()) { TRACE_CALL("MovingTrain.Displace"); TRACE_EXIT("MovingTrain.Displace"); return; }
+    if (old_Displace) old_Displace(s);
 }
 static void new_Addcoins(void* s, int c) {
-    TRACE_CALL("RunSessionData.Addcoins");
     int b = g_AddCoinsBonus.load();
-    if (old_Addcoins) old_Addcoins(s, b > 0 ? c + b : c);
-    TRACE_EXIT("RunSessionData.Addcoins");
+    if (b > 0) { TRACE_CALL("RunSessionData.Addcoins"); TRACE_EXIT("RunSessionData.Addcoins"); if (old_Addcoins) old_Addcoins(s, c + b); }
+    else { if (old_Addcoins) old_Addcoins(s, c); }
 }
 static void new_AddKeys(void* s, int k) {
-    TRACE_CALL("RunSessionData.AddKeys");
     int b = g_AddKeysBonus.load();
-    if (old_AddKeys) old_AddKeys(s, b > 0 ? k + b : k);
-    TRACE_EXIT("RunSessionData.AddKeys");
+    if (b > 0) { TRACE_CALL("RunSessionData.AddKeys"); TRACE_EXIT("RunSessionData.AddKeys"); if (old_AddKeys) old_AddKeys(s, k + b); }
+    else { if (old_AddKeys) old_AddKeys(s, k); }
 }
 static void new_AddPoints(void* s, double p) {
-    TRACE_CALL("RunSessionData.AddPoints");
     int b = g_AddScoreBonus.load();
-    if (old_AddPoints) old_AddPoints(s, b > 0 ? p + (double)b : p);
-    TRACE_EXIT("RunSessionData.AddPoints");
+    if (b > 0) { TRACE_CALL("RunSessionData.AddPoints"); TRACE_EXIT("RunSessionData.AddPoints"); if (old_AddPoints) old_AddPoints(s, p + (double)b); }
+    else { if (old_AddPoints) old_AddPoints(s, p); }
 }
 static void new_UpdatePowers(void* s) {
-    TRACE_CALL("CharacterPower.UpdatePowers");
-    if (!g_UnlimitedPowerTime.load() && old_UpdatePowers) old_UpdatePowers(s);
-    TRACE_EXIT("CharacterPower.UpdatePowers");
+    if (g_UnlimitedPowerTime.load()) { TRACE_CALL("CharacterPower.UpdatePowers"); TRACE_EXIT("CharacterPower.UpdatePowers"); return; }
+    if (old_UpdatePowers) old_UpdatePowers(s);
 }
 static void new_MainUpdatePowers(void* s) {
-    TRACE_CALL("MainPowerSystem.UpdatePowers");
-    if (!g_UnlimitedPowerTime.load() && old_MainUpdatePowers) old_MainUpdatePowers(s);
-    TRACE_EXIT("MainPowerSystem.UpdatePowers");
+    if (g_UnlimitedPowerTime.load()) { TRACE_CALL("MainPowerSystem.UpdatePowers"); TRACE_EXIT("MainPowerSystem.UpdatePowers"); return; }
+    if (old_MainUpdatePowers) old_MainUpdatePowers(s);
 }
 static void new_FinishFlight(void* s) {
-    TRACE_CALL("FlyingState.FinishFlight");
-    if (!g_UnlimitedJetpackTime.load() && old_FinishFlight) old_FinishFlight(s);
-    TRACE_EXIT("FlyingState.FinishFlight");
+    if (g_UnlimitedJetpackTime.load()) { TRACE_CALL("FlyingState.FinishFlight"); TRACE_EXIT("FlyingState.FinishFlight"); return; }
+    if (old_FinishFlight) old_FinishFlight(s);
 }
 
-// ★ Defensive: cap loop count and null-guard so revive-cancel path can't crash
+// ★ No loop to prevent game crash on cancel
 static void new_OnRevivedWithCurrency(void* s) {
-    TRACE_CALL("MainReviveSystem.OnRevivedWithCurrency");
-    int n = g_ReviveReward.load() ? 10 : 1;
-    if (n > 20) n = 20;
-    for (int i = 0; i < n; i++) {
-        if (old_OnRevivedWithCurrency) old_OnRevivedWithCurrency(s);
-    }
-    TRACE_EXIT("MainReviveSystem.OnRevivedWithCurrency");
+    if (g_ReviveReward.load()) { TRACE_CALL("MainReviveSystem.OnRevivedWithCurrency"); TRACE_EXIT("MainReviveSystem.OnRevivedWithCurrency"); }
+    if (old_OnRevivedWithCurrency) old_OnRevivedWithCurrency(s);
 }
 static void new_MockRevivedWithCurrency(void* s) {
-    TRACE_CALL("MockReviveSystem.OnRevivedWithCurrency");
-    int n = g_ReviveReward.load() ? 10 : 1;
-    if (n > 20) n = 20;
-    for (int i = 0; i < n; i++) {
-        if (old_MockRevivedWithCurrency) old_MockRevivedWithCurrency(s);
-    }
-    TRACE_EXIT("MockReviveSystem.OnRevivedWithCurrency");
+    if (g_ReviveReward.load()) { TRACE_CALL("MockReviveSystem.OnRevivedWithCurrency"); TRACE_EXIT("MockReviveSystem.OnRevivedWithCurrency"); }
+    if (old_MockRevivedWithCurrency) old_MockRevivedWithCurrency(s);
 }
 static void new_HandleCoinsPickedUp(void* s) {
-    TRACE_CALL("GameScreenCoinCounter.HandleOnCoinsPickedUp");
-    if (!g_FreezeCoins.load() && old_HandleCoinsPickedUp) old_HandleCoinsPickedUp(s);
-    TRACE_EXIT("GameScreenCoinCounter.HandleOnCoinsPickedUp");
+    if (g_FreezeCoins.load()) { TRACE_CALL("GameScreenCoinCounter.HandleOnCoinsPickedUp"); TRACE_EXIT("GameScreenCoinCounter.HandleOnCoinsPickedUp"); return; }
+    if (old_HandleCoinsPickedUp) old_HandleCoinsPickedUp(s);
 }
 static void new_HandlePointsEarned(void* s) {
-    TRACE_CALL("GameScreenScoreCounter.HandleOnPointsEarned");
-    if (!g_FreezeScore.load() && old_HandlePointsEarned) old_HandlePointsEarned(s);
-    TRACE_EXIT("GameScreenScoreCounter.HandleOnPointsEarned");
+    if (g_FreezeScore.load()) { TRACE_CALL("GameScreenScoreCounter.HandleOnPointsEarned"); TRACE_EXIT("GameScreenScoreCounter.HandleOnPointsEarned"); return; }
+    if (old_HandlePointsEarned) old_HandlePointsEarned(s);
 }
 
 // ================================================================
