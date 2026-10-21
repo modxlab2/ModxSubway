@@ -1,4 +1,4 @@
-// Main.cpp — FULL FIXED
+// Main.cpp — FULL FIXED (OnStumble removed)
 #include "Includes.h"
 #include "Includes/Logger.h"
 #include "Includes/obfuscate.h"
@@ -242,11 +242,7 @@ static void crashHandler(int sig, siginfo_t* info, void* ctx) {
         if (g_LogFd   >= 0) fsync(g_LogFd);
     }
 
-    // ─────────────────────────────────────────────────────────────
-    //  FIX: Cancel the SIGALRM safety timer BEFORE chaining/raising.
-    //  If we chain to the previous (game) handler and it recovers,
-    //  a pending 3-second alarm would silently terminate the process.
-    // ─────────────────────────────────────────────────────────────
+    // Cancel safety timer before chaining
     alarm(0);
 
     for (int i = 0; i < 5; i++) {
@@ -382,7 +378,6 @@ static std::atomic<int>  g_CharacterSpeed      {0};
 static std::atomic<int>  g_AirJumpHeight       {0};
 static std::atomic<int>  g_CameraMode          {0};
 static std::atomic<bool> g_NoBoundaryImpact    {false};
-static std::atomic<bool> g_NoStumble           {false};
 static std::atomic<bool> g_HideJetpack         {false};
 static std::atomic<bool> g_HidePogostick       {false};
 static std::atomic<bool> g_HideMagnet          {false};
@@ -438,8 +433,7 @@ static std::atomic<bool> g_FreezeScore         {false};
 
 // ================================================================
 //  ORIGINAL FUNCTION POINTERS
-//  NOTE: Types tightened to actual il2cpp signatures where known.
-//        (...)-style variadic pointers kept only where genuinely safe.
+//  (OnStumble removed per user request)
 // ================================================================
 static bool  (*old_CheckFrontalImpact)(void*, void*)          = nullptr;
 static bool  (*old_CheckSideImpact)(void*, void*)             = nullptr;
@@ -460,12 +454,6 @@ static void   (*old_UpdateMovement)(void*)                    = nullptr;
 static float  (*old_get_AirJumpHeight)(void*)                 = nullptr;
 static bool   (*old_CameraApply)(void*, void*)                = nullptr;
 static void   (*old_NotifySideImpact)(void*, int, void*, void*)= nullptr;
-// ── FIX #1 ─────────────────────────────────────────────────────
-// DeathCause is a *class* (reference type) → must be passed as void*.
-// Old code used `int`, truncating the 64-bit pointer to 32 bits,
-// which caused SIGSEGV whenever the game died without auto-revive.
-static void   (*old_OnStumble)(void*, void*)                  = nullptr;
-// ─────────────────────────────────────────────────────────────
 static void   (*old_ShowFlight)(void*, bool, int)             = nullptr;
 static void   (*old_ShowPogostick)(void*, bool)               = nullptr;
 static void   (*old_ShowMagnet)(void*, bool)                  = nullptr;
@@ -573,14 +561,6 @@ static void new_NotifySideImpact(void* s, int h, void* e, void* ent) {
     }
     if (old_NotifySideImpact) old_NotifySideImpact(s, h, e, ent);
 }
-
-// ── FIX #1 applied ──────────────────────────────────────────
-static void new_OnStumble(void* s, void* dc) {
-    if (g_NoStumble.load()) { TRACE_CALL("RunProgressOrderIndicator.OnStumble"); TRACE_EXIT("RunProgressOrderIndicator.OnStumble"); return; }
-    if (old_OnStumble) old_OnStumble(s, dc);
-}
-// ─────────────────────────────────────────────────────────────
-
 static void new_ShowFlight(void* s, bool sh, int m) {
     if (g_HideJetpack.load()) { TRACE_CALL("CharacterPropsController.ShowFlight"); TRACE_EXIT("CharacterPropsController.ShowFlight"); return; }
     if (old_ShowFlight) old_ShowFlight(s, sh, m);
@@ -766,23 +746,16 @@ static void installPhase2() {
 
 // ================================================================
 //  PHASE 3
+//  (OnStumble hook removed per user request — crashing candidate)
 // ================================================================
 static void installPhase3() {
-    LOGI("=== PHASE 3: camera / rank indicator ===");
+    LOGI("=== PHASE 3: camera (OnStumble disabled) ===");
     {
         auto C = new LoadClass(OBFUSCATE("SYBO.Subway"), OBFUSCATE("CameraGroundedModifier"));
         if (C && C->thisclass) {
             DWORD o = C->GetMethodOffsetByName(OBFUSCATE("Apply"),1);
             if (o) HOOK_CHECK("CameraGroundedModifier","Apply",o,(void*)new_CameraApply,old_CameraApply);
             else LOG_SKIP("CameraGroundedModifier","Apply");
-        }
-    }
-    {
-        auto C = new LoadClass(OBFUSCATE("SYBO.Subway"), OBFUSCATE("RunProgressOrderIndicator"));
-        if (C && C->thisclass) {
-            DWORD o = C->GetMethodOffsetByName(OBFUSCATE("OnStumble"),1);
-            if (o) HOOK_CHECK("RunProgressOrderIndicator","OnStumble",o,(void*)new_OnStumble,old_OnStumble);
-            else LOG_SKIP("RunProgressOrderIndicator","OnStumble");
         }
     }
     LOGI("=== PHASE 3 complete ===");
@@ -983,7 +956,7 @@ void* hack_thread(void*) {
 }
 
 // ================================================================
-//  JNI — FEATURE LIST
+//  JNI — FEATURE LIST  (132 removed)
 // ================================================================
 jobjectArray GetFeatureList(JNIEnv* env, jobject) {
     jobjectArray ret;
@@ -999,7 +972,6 @@ jobjectArray GetFeatureList(JNIEnv* env, jobject) {
         OBFUSCATE("104_Toggle_Auto Revive"),
         OBFUSCATE("130_Toggle_Low Gravity (Float)"),
         OBFUSCATE("131_Toggle_No Wall Impact"),
-        OBFUSCATE("132_Toggle_No Rank Penalty on Hit (Race UI only)"),
         OBFUSCATE("133_Toggle_Freeze Player Movement"),
         OBFUSCATE("134_SeekBar_Air Jump Height Boost_0_200"),
         OBFUSCATE("160_SeekBar_Player Speed Boost_0_200"),
@@ -1045,7 +1017,7 @@ jobjectArray GetFeatureList(JNIEnv* env, jobject) {
 }
 
 // ================================================================
-//  JNI — CHANGES
+//  JNI — CHANGES  (case 132 removed)
 // ================================================================
 void Changes(JNIEnv*, jclass, jobject, jint featNum, jstring, jint value, jlong, jboolean boolean, jstring) {
     switch (featNum) {
@@ -1071,7 +1043,7 @@ void Changes(JNIEnv*, jclass, jobject, jint featNum, jstring, jint value, jlong,
         case 110: g_UnlimitedCoins.store(boolean); break;
         case 130: g_NoGravity.store(boolean);            break;
         case 131: g_NoBoundaryImpact.store(boolean);     break;
-        case 132: g_NoStumble.store(boolean);            break;
+        // case 132 (NoStumble / OnStumble) removed
         case 133: g_FreezeCharacter.store(boolean);      break;
         case 134: g_AirJumpHeight.store(value);          break;
         case 135: g_HideJetpack.store(boolean);          break;
@@ -1131,7 +1103,7 @@ void Changes(JNIEnv*, jclass, jobject, jint featNum, jstring, jint value, jlong,
             g_NoGravity.store(false); g_FreezeCharacter.store(false);
             g_CharacterSpeed.store(0); g_AirJumpHeight.store(0);
             g_CameraMode.store(0); g_NoBoundaryImpact.store(false);
-            g_NoStumble.store(false); g_HideJetpack.store(false);
+            g_HideJetpack.store(false);
             g_HidePogostick.store(false); g_HideMagnet.store(false);
             g_HideHoverboard.store(false); g_StopTrains.store(false);
             g_AddCoinsBonus.store(0); g_AddKeysBonus.store(0);
