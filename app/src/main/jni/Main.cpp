@@ -1,3 +1,4 @@
+// Main.cpp — FULL FIXED
 #include "Includes.h"
 #include "Includes/Logger.h"
 #include "Includes/obfuscate.h"
@@ -233,12 +234,20 @@ static void crashHandler(int sig, siginfo_t* info, void* ctx) {
                 char hex[24]; safeHexToStr((unsigned long)bt[i], hex, sizeof(hex));
                 n = snprintf(buf, sizeof(buf), "  #%02d %s\n", i, hex);
             }
+            (void)n;
             safeWriteStr(g_CrashFd, buf);
             safeWriteStr(g_LogFd,   buf);
         }
         if (g_CrashFd >= 0) fsync(g_CrashFd);
         if (g_LogFd   >= 0) fsync(g_LogFd);
     }
+
+    // ─────────────────────────────────────────────────────────────
+    //  FIX: Cancel the SIGALRM safety timer BEFORE chaining/raising.
+    //  If we chain to the previous (game) handler and it recovers,
+    //  a pending 3-second alarm would silently terminate the process.
+    // ─────────────────────────────────────────────────────────────
+    alarm(0);
 
     for (int i = 0; i < 5; i++) {
         if (g_SigList[i] == sig && g_Saved[i].has_prev) {
@@ -326,7 +335,7 @@ static bool skipHookFile(const std::string& hookName) {
 }
 
 // ================================================================
-//  PROLOGUE SAFETY CHECK (Allows CBZ/CBNZ)
+//  PROLOGUE SAFETY CHECK
 // ================================================================
 static const char* checkFunctionSafety(void* addr) {
     if (!addr) return "null-addr";
@@ -338,7 +347,6 @@ static const char* checkFunctionSafety(void* addr) {
 
     for (int i = 0; i < 4; i++) {
         uint32_t w = code[i];
-        // Only block absolute branches, let CBZ/CBNZ/TBZ/TBNZ pass through so hooks work
         if ((w & 0x7C000000) == 0x14000000) return "B in prologue";
         if ((w & 0x7C000000) == 0x94000000) return "BL in prologue";
         if ((w & 0xFFFF0000) == 0xD61F0000) return "BR in prologue";
@@ -430,17 +438,19 @@ static std::atomic<bool> g_FreezeScore         {false};
 
 // ================================================================
 //  ORIGINAL FUNCTION POINTERS
+//  NOTE: Types tightened to actual il2cpp signatures where known.
+//        (...)-style variadic pointers kept only where genuinely safe.
 // ================================================================
-static bool  (*old_CheckFrontalImpact)(...)     = nullptr;
-static bool  (*old_CheckSideImpact)(...)        = nullptr;
-static int   (*old_get_JumpLimit)(...)          = nullptr;
-static float (*old_get_JumpHeight)(...)         = nullptr;
-static bool  (*old_IsAutoReviveEnabled)(...)    = nullptr;
-static float (*old_GetDuration)(...)            = nullptr;
-static float (*old_get_LaneChangeDuration)(...) = nullptr;
-static int   (*old_get_BaseMultiplierSum)(...)  = nullptr;
-static bool  (*old_get_detectCollisions)(...)   = nullptr;
-static int   (*old_GetCurrency)(...)            = nullptr;
+static bool  (*old_CheckFrontalImpact)(void*, void*)          = nullptr;
+static bool  (*old_CheckSideImpact)(void*, void*)             = nullptr;
+static int   (*old_get_JumpLimit)(void*)                      = nullptr;
+static float (*old_get_JumpHeight)(void*)                     = nullptr;
+static bool  (*old_IsAutoReviveEnabled)(void*)                = nullptr;
+static float (*old_GetDuration)(void*, int)                   = nullptr;
+static float (*old_get_LaneChangeDuration)(void*)             = nullptr;
+static int   (*old_get_BaseMultiplierSum)(void*)              = nullptr;
+static bool  (*old_get_detectCollisions)(void*)               = nullptr;
+static int   (*old_GetCurrency)(void*, int)                   = nullptr;
 
 static bool   (*old_get_IsIAP)(void*)                         = nullptr;
 static void   (*old_ApplyGravity)(void*)                      = nullptr;
@@ -449,8 +459,13 @@ static float  (*old_get_MaxSpeed)(void*)                      = nullptr;
 static void   (*old_UpdateMovement)(void*)                    = nullptr;
 static float  (*old_get_AirJumpHeight)(void*)                 = nullptr;
 static bool   (*old_CameraApply)(void*, void*)                = nullptr;
-static void   (*old_NotifySideImpact)(void*, int, void*, void*) = nullptr;
-static void   (*old_OnStumble)(void*, int)                    = nullptr;
+static void   (*old_NotifySideImpact)(void*, int, void*, void*)= nullptr;
+// ── FIX #1 ─────────────────────────────────────────────────────
+// DeathCause is a *class* (reference type) → must be passed as void*.
+// Old code used `int`, truncating the 64-bit pointer to 32 bits,
+// which caused SIGSEGV whenever the game died without auto-revive.
+static void   (*old_OnStumble)(void*, void*)                  = nullptr;
+// ─────────────────────────────────────────────────────────────
 static void   (*old_ShowFlight)(void*, bool, int)             = nullptr;
 static void   (*old_ShowPogostick)(void*, bool)               = nullptr;
 static void   (*old_ShowMagnet)(void*, bool)                  = nullptr;
@@ -468,7 +483,7 @@ static void   (*old_HandleCoinsPickedUp)(void*)               = nullptr;
 static void   (*old_HandlePointsEarned)(void*)                = nullptr;
 
 // ================================================================
-//  HOOK IMPLEMENTATIONS (Silent Pass-through on Toggle OFF)
+//  HOOK IMPLEMENTATIONS
 // ================================================================
 static bool new_CheckFrontalImpact(void* s, void* o) {
     if (g_FrontalImpact.load()) { TRACE_CALL("CharacterMotor.CheckFrontalImpact"); TRACE_EXIT("CharacterMotor.CheckFrontalImpact"); return false; }
@@ -496,10 +511,10 @@ static bool new_IsAutoReviveEnabled(void* s) {
     if (g_AutoRevive.load()) { TRACE_CALL("StumbleBehaviour.IsAutoReviveEnabled"); TRACE_EXIT("StumbleBehaviour.IsAutoReviveEnabled"); return true; }
     return old_IsAutoReviveEnabled ? old_IsAutoReviveEnabled(s) : false;
 }
-static float new_GetDuration(void* s, void* cfg) {
+static float new_GetDuration(void* s, int level) {
     int v = g_PowerDuration.load();
     if (v > 0) { TRACE_CALL("PowerConfig.GetDuration"); TRACE_EXIT("PowerConfig.GetDuration"); return (float)v; }
-    return old_GetDuration ? old_GetDuration(s, cfg) : 0.0f;
+    return old_GetDuration ? old_GetDuration(s, level) : 0.0f;
 }
 static int new_get_BaseMultiplierSum(void* s) {
     int v = g_ScoreMultiplier.load();
@@ -551,8 +566,6 @@ static bool new_CameraApply(void* s, void* c) {
     if (m == 2) { TRACE_CALL("CameraGroundedModifier.Apply"); TRACE_EXIT("CameraGroundedModifier.Apply"); return false; }
     return old_CameraApply ? old_CameraApply(s, c) : false;
 }
-
-// ★ Side impact is fully blocked if Feature 100 OR 131 is on
 static void new_NotifySideImpact(void* s, int h, void* e, void* ent) {
     if (g_NoBoundaryImpact.load() || g_SideImpact.load()) {
         TRACE_CALL("CharacterMotor.NotifySideImpact"); TRACE_EXIT("CharacterMotor.NotifySideImpact");
@@ -561,10 +574,13 @@ static void new_NotifySideImpact(void* s, int h, void* e, void* ent) {
     if (old_NotifySideImpact) old_NotifySideImpact(s, h, e, ent);
 }
 
-static void new_OnStumble(void* s, int dc) {
+// ── FIX #1 applied ──────────────────────────────────────────
+static void new_OnStumble(void* s, void* dc) {
     if (g_NoStumble.load()) { TRACE_CALL("RunProgressOrderIndicator.OnStumble"); TRACE_EXIT("RunProgressOrderIndicator.OnStumble"); return; }
     if (old_OnStumble) old_OnStumble(s, dc);
 }
+// ─────────────────────────────────────────────────────────────
+
 static void new_ShowFlight(void* s, bool sh, int m) {
     if (g_HideJetpack.load()) { TRACE_CALL("CharacterPropsController.ShowFlight"); TRACE_EXIT("CharacterPropsController.ShowFlight"); return; }
     if (old_ShowFlight) old_ShowFlight(s, sh, m);
@@ -612,8 +628,6 @@ static void new_FinishFlight(void* s) {
     if (g_UnlimitedJetpackTime.load()) { TRACE_CALL("FlyingState.FinishFlight"); TRACE_EXIT("FlyingState.FinishFlight"); return; }
     if (old_FinishFlight) old_FinishFlight(s);
 }
-
-// ★ No loop to prevent game crash on cancel
 static void new_OnRevivedWithCurrency(void* s) {
     if (g_ReviveReward.load()) { TRACE_CALL("MainReviveSystem.OnRevivedWithCurrency"); TRACE_EXIT("MainReviveSystem.OnRevivedWithCurrency"); }
     if (old_OnRevivedWithCurrency) old_OnRevivedWithCurrency(s);
