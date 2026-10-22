@@ -43,10 +43,10 @@ struct Vec4 {
 static void *handle = nullptr;
 std::vector<std::string> shaders;
 
-int chamsint = 3; // Default: Hybrid Opaque
+int chamsint = 3; // Default: Hybrid (Professional)
 bool g_ChamsEnabled = false;
 std::string mineShader = "_Displacement"; 
-float g_MaxDistance = 40.0f; 
+float g_MaxDistance = 20.0f; // ডিফল্ট দূরত্ব কমিয়ে ২০ করা হয়েছে
 
 // ================================================================
 //  Color Presets
@@ -138,35 +138,29 @@ void new_glDrawElements(unsigned int mode, int count, unsigned int type, const v
         return old_glDrawElements(mode, count, type, indices);
     }
 
-    // ★ Distance Filter (Fixed using matrix translation)
+    // ★ Distance & Front Check Filter (Fixed & Optimized)
     if (g_MaxDistance > 0.0f) {
-        // hlslcc_mtx4x4unity_ObjectToWorld[3] is the translation column
         int objLoc = old_glGetUniformLocation(currProgram, "hlslcc_mtx4x4unity_ObjectToWorld[3]");
         int camLoc = old_glGetUniformLocation(currProgram, "_WorldSpaceCameraPos");
         
         if (objLoc != -1 && camLoc != -1) {
-            float objVec[4]; // Translation is vec4 (x, y, z, 1)
+            float objVec[4];
             float cam[3];
             p_glGetUniformfv(currProgram, objLoc, objVec);
             p_glGetUniformfv(currProgram, camLoc, cam);
-            
+
+            // 3D Distance Calculation
             float dx = objVec[0] - cam[0];
+            float dy = objVec[1] - cam[1];
             float dz = objVec[2] - cam[2];
-            float dist = sqrt(dx*dx + dz*dz);
+            float dist = sqrt(dx*dx + dy*dy + dz*dz);
 
-            // Log for debugging
-            static std::chrono::steady_clock::time_point lastLogTime;
-            auto now = std::chrono::steady_clock::now();
-            if (std::chrono::duration_cast<std::chrono::milliseconds>(now - lastLogTime).count() > 1000) {
-                lastLogTime = now;
-                std::ofstream logFile("/sdcard/Documents/Chams_Debug.txt", std::ios::app);
-                if (logFile.is_open()) {
-                    logFile << "Dist: " << dist << " | ObjZ: " << objVec[2] << " | CamZ: " << cam[2] << " | Max: " << g_MaxDistance << "\n";
-                    logFile.close();
-                }
-            }
+            // Ignore objects that are behind the player (assuming +Z is forward)
+            // Note: In Subway Surfers, usually the character moves towards +Z or -Z. 
+            // The camera is behind the player. If the train is behind the player, Z difference will be negative.
+            bool isBehind = (dz < -5.0f); // Simple heuristic
 
-            if (dist > g_MaxDistance) {
+            if (dist > g_MaxDistance || isBehind) {
                 return old_glDrawElements(mode, count, type, indices);
             }
         }
@@ -186,14 +180,14 @@ void new_glDrawElements(unsigned int mode, int count, unsigned int type, const v
     p_glEnable(GL_BLEND);
     p_glBlendFunc(GL_ONE, GL_CONSTANT_COLOR); 
 
-    // Mode 1: Solid Visible
+    // Mode 1: Solid Visible (No wall bleed)
     if (chamsint == 1) {
         p_glDepthMask(GL_FALSE); 
         p_glBlendColor(visibleColor.x, visibleColor.y, visibleColor.z, 1.0f);
         old_glDrawElements(mode, count, type, indices);
         p_glDepthMask(GL_TRUE);
     }
-    // Mode 2: X-Ray
+    // Mode 2: X-Ray (Through walls)
     else if (chamsint == 2) {
         p_glDepthMask(GL_FALSE); 
         p_glDisable(GL_DEPTH_TEST);
@@ -204,20 +198,17 @@ void new_glDrawElements(unsigned int mode, int count, unsigned int type, const v
         p_glEnable(GL_CULL_FACE);
         p_glDepthMask(GL_TRUE);
     }
-    // Mode 3: Hybrid Opaque
+    // Mode 3: Professional (Respects Depth - No wall bleed)
     else if (chamsint == 3) {
         p_glEnable(GL_DEPTH_TEST);
-        p_glDepthFunc(GL_LESS); 
+        p_glDepthFunc(GL_LEQUAL); 
+        p_glDepthMask(GL_FALSE); // Don't write to depth buffer so we don't mess up the game's rendering
         
-        // 1. Draw inner walls (Sky Blue) by culling FRONT faces
-        p_glCullFace(GL_FRONT); 
-        p_glBlendColor(inWallColor.x, inWallColor.y, inWallColor.z, 1.0f);
-        old_glDrawElements(mode, count, type, indices);
-
-        // 2. Draw outer walls (Dark Green) by culling BACK faces
-        p_glCullFace(GL_BACK); 
+        // Draw a clean solid color overlay on the visible parts of the train
         p_glBlendColor(visibleColor.x, visibleColor.y, visibleColor.z, 1.0f);
         old_glDrawElements(mode, count, type, indices);
+
+        p_glDepthMask(GL_TRUE);
     }
 
     p_glDisable(GL_BLEND);

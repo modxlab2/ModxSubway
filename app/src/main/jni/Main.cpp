@@ -883,12 +883,12 @@ jobjectArray GetFeatureList(JNIEnv* env, jobject) {
         OBFUSCATE("Category_World"),
         OBFUSCATE("142_Toggle_Freeze Trains"),
 
-        OBFUSCATE("Category_Chams"),
+                OBFUSCATE("Category_Chams"),
         OBFUSCATE("119_Toggle_Enable Chams"),
-        OBFUSCATE("120_Spinner_Chams Mode_Off,Solid,X-Ray,Hybrid"),
+        OBFUSCATE("120_Spinner_Chams Mode_Off,X-Ray,Solid,Professional"),
         OBFUSCATE("125_Spinner_Color Preset_Green Blue,Neon Red,Cyan Pink"),
         OBFUSCATE("126_Spinner_Shader Target_Trains Only,All Objects"),
-        OBFUSCATE("127_SeekBar_Max Distance_15_100"),
+        OBFUSCATE("127_SeekBar_Max Distance_10_50"), // দূরত্ব ১০ থেকে ৫০ করা হয়েছে
         OBFUSCATE("121_Toggle_Rainbow Visible"),
         OBFUSCATE("122_Toggle_Rainbow Wall"),
     };
