@@ -141,7 +141,7 @@ public class LoginHelper {
 
         final LinearLayout card = new LinearLayout(ctx);
         card.setOrientation(LinearLayout.VERTICAL);
-        card.setPadding(dp(14), dp(10), dp(14), dp(10));
+        card.setPadding(dp(14), dp(8), dp(14), dp(8));
         card.setGravity(Gravity.CENTER_HORIZONTAL);
         card.setBackgroundColor(Color.TRANSPARENT);
         root.addView(card);

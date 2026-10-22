@@ -144,7 +144,7 @@ String NumberTxtColor = "#3DDB87";
     private static final int   MENU_WIDTH  = 272;
     private static final int   MENU_HEIGHT = 352;
     private static final float MENU_CORNER = 10f;
-    private static final float ICON_SIZE   = 50f;
+    private static final float ICON_SIZE   = 65f;
     private static final float ICON_ALPHA  = 1f;
 
     // ---- Glow / frame ----
