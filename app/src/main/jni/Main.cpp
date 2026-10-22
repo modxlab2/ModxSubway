@@ -215,7 +215,6 @@ static void crashHandler(int sig, siginfo_t* info, void* ctx) {
     }
 
     alarm(0);
-
     for (int i = 0; i < 5; i++) {
         if (g_SigList[i] == sig && g_Saved[i].has_prev) {
             struct sigaction& prev = g_Saved[i].prev;
@@ -242,7 +241,6 @@ static void installCrashHandler() {
         sa.sa_flags = SA_SIGINFO | SA_ONSTACK | SA_RESTART;
         sa.sa_sigaction = crashHandler;
         sigemptyset(&sa.sa_mask);
-
         struct sigaction prev;
         if (sigaction(g_SigList[i], nullptr, &prev) == 0) {
             g_Saved[i].prev = prev;
@@ -260,7 +258,7 @@ static void installCrashHandler() {
 static void initLogging() {
     g_LogDir = findLogDir();
     if (g_LogDir.empty()) return;
-
+    
     std::string mainPath  = g_LogDir + "/modxlab.log";
     std::string crashPath = g_LogDir + "/modxlab_crash.log";
 
@@ -325,19 +323,25 @@ static const char* checkFunctionSafety(void* addr) {
 static std::atomic<int>  g_JumpLimit        {0};
 static std::atomic<int>  g_JumpHeight       {0};
 static std::atomic<bool> g_AutoRevive       {false};
-static std::atomic<int>  g_PowerDuration    {0};   // used by 145 slider (was 105)
+static std::atomic<int>  g_PowerDuration    {0};   
 static std::atomic<bool> g_FastLaneChange   {false};
 static std::atomic<int>  g_ScoreMultiplier  {0};
-static std::atomic<bool> g_NoCollision      {false};   // feature 108 God Mode
 static std::atomic<bool> g_UnlimitedCoins   {false};
+
+// No Collision (108 God Mode) - uses CharacterController.get_detectCollisions
+static std::atomic<bool> g_NoCollision      {false};
 static std::atomic<bool> g_UnlimitedShop    {false};   // feature 150 Free IAP
 static std::atomic<bool> g_NoImpact         {false};   // feature 132 No Impact
+
 static std::atomic<bool> g_NoGravity        {false};
 static std::atomic<bool> g_FreezeCharacter  {false};
 static std::atomic<int>  g_CharacterSpeed   {0};
 static std::atomic<int>  g_AirJumpHeight    {0};
 static std::atomic<int>  g_CameraMode       {0};
-static std::atomic<bool> g_NoBoundaryImpact {false};   // feature 131 No Wall
+
+// No Wall (131) - uses NotifySideImpact + CheckFrontalImpact + CheckSideImpact
+static std::atomic<bool> g_NoBoundaryImpact {false};   
+
 static std::atomic<bool> g_HideJetpack      {false};
 static std::atomic<bool> g_HidePogostick    {false};
 static std::atomic<bool> g_HideMagnet       {false};
@@ -346,8 +350,8 @@ static std::atomic<bool> g_StopTrains       {false};
 static std::atomic<int>  g_AddCoinsBonus    {0};
 static std::atomic<int>  g_AddKeysBonus     {0};
 static std::atomic<int>  g_AddScoreBonus    {0};
-static std::atomic<bool> g_UnlimitedPowerTime  {false};   // feature 140 Infinite Powerup
-static std::atomic<bool> g_UnlimitedJetpackTime{false};   // feature 141 Infinite Jetpack
+static std::atomic<bool> g_UnlimitedPowerTime  {false};   
+static std::atomic<bool> g_UnlimitedJetpackTime{false};   
 static std::atomic<bool> g_ReviveReward     {false};
 static std::atomic<bool> g_FreezeCoins      {false};
 static std::atomic<bool> g_FreezeScore      {false};
@@ -399,8 +403,8 @@ static float (*old_get_LaneChangeDuration)(void*)             = nullptr;
 static int   (*old_get_BaseMultiplierSum)(void*)              = nullptr;
 static int   (*old_GetCurrency)(void*, int)                   = nullptr;
 
-// NOTE: old_get_IsIAP — NOT hooked (uses memory patch)
-// NOTE: old_get_detectCollisions — REMOVED (broken approach; replaced by impact checks)
+// RESTORED: get_detectCollisions for God Mode (108)
+static bool  (*old_get_detectCollisions)(void*)               = nullptr;
 
 static void   (*old_ApplyGravity)(void*)                      = nullptr;
 static float  (*old_get_MinSpeed)(void*)                      = nullptr;
@@ -445,42 +449,21 @@ static void bytesToHex(const uint8_t* bytes, size_t len, char* out) {
 }
 
 static void applyIsIAPPatch(bool enable) {
-    if (!g_IsIAPAddr) {
-        LOGW("[PATCH DEFER] get_IsIAP address not ready (enable=%d)", (int)enable);
-        return;
-    }
-    if (!g_IsIAPOrigSaved.load()) {
-        LOGE("[PATCH FAIL] get_IsIAP original bytes not saved");
-        return;
-    }
+    if (!g_IsIAPAddr) return;
+    if (!g_IsIAPOrigSaved.load()) return;
 
     const uintptr_t patchAddr = (uintptr_t)g_IsIAPAddr;
 
     if (enable) {
         MemoryPatch patch = MemoryPatch::createWithHex(
                 patchAddr, std::string("00008052C0035FD6"));
-        if (patch.isValid()) {
-            patch.Modify();
-            uint32_t* c = (uint32_t*)g_IsIAPAddr;
-            if (c[0] == 0x52800000) {
-                LOGI("[PATCH OK] get_IsIAP -> return false (verified)");
-            } else {
-                LOGE("[PATCH WARN] get_IsIAP verify failed: got 0x%08x", c[0]);
-            }
-        } else {
-            LOGE("[PATCH FAIL] get_IsIAP enable (patch invalid)");
-        }
+        if (patch.isValid()) patch.Modify();
     } else {
         char hex[33];
         bytesToHex(g_IsIAPOriginal, 16, hex);
         MemoryPatch patch = MemoryPatch::createWithHex(
                 patchAddr, std::string(hex));
-        if (patch.isValid()) {
-            patch.Modify();
-            LOGI("[PATCH OK] get_IsIAP -> restored original");
-        } else {
-            LOGE("[PATCH FAIL] get_IsIAP restore (patch invalid)");
-        }
+        if (patch.isValid()) patch.Modify();
     }
 }
 
@@ -506,7 +489,6 @@ static bool new_IsAutoReviveEnabled(void* s) {
     return old_IsAutoReviveEnabled ? old_IsAutoReviveEnabled(s) : false;
 }
 static float new_GetDuration(void* s, int level) {
-    // Feature 145 slider: return custom duration when set
     int v = g_PowerDuration.load();
     if (v > 0) return (float)v;
     return old_GetDuration ? old_GetDuration(s, level) : 0.0f;
@@ -521,44 +503,30 @@ static int new_GetCurrency(void* s, int t) {
     return old_GetCurrency ? old_GetCurrency(s, t) : 0;
 }
 
-// ================================================================
-//  IMPACT CHECKS — PROFESSIONAL NO-IMPACT / GOD MODE
-//  ------------------------------------------------------------------
-//  Instead of hooking `get_detectCollisions` (returns global flag,
-//  breaks coin collection, toggle doesn't restore), we hook the
-//  per-obstacle impact checks:
-//
-//    CheckFrontalImpact  → called when character should take frontal damage
-//    CheckSideImpact     → called when character should take side damage
-//    NotifySideImpact    → called when character should be pushed back by wall
-//
-//  Returning false / no-op → survives obstacle, but coins still collect
-//  (item pickups use trigger colliders, not these checks).
-//
-//  108 God Mode  (g_NoCollision)  → impact checks false + notify no-op
-//  132 No Impact (g_NoImpact)     → impact checks false
-//  131 No Wall   (g_NoBoundaryImpact) → notify no-op
-// ================================================================
+// --- GOD MODE (108) ---
+static bool new_get_detectCollisions(void* s) {
+    if (g_NoCollision.load()) {
+        return false;
+    }
+    return old_get_detectCollisions ? old_get_detectCollisions(s) : true;
+}
+
+// --- NO IMPACT & NO WALL (131 & 132) ---
+// Combined CheckFrontalImpact and CheckSideImpact as requested
 static bool new_CheckFrontalImpact(void* s, void* hit) {
-    if (g_NoCollision.load() || g_NoImpact.load()) {
-        TRACE_CALL("CharacterMotor.CheckFrontalImpact");
-        TRACE_EXIT("CharacterMotor.CheckFrontalImpact");
+    if (g_NoCollision.load() || g_NoImpact.load() || g_NoBoundaryImpact.load()) {
         return false;
     }
     return old_CheckFrontalImpact ? old_CheckFrontalImpact(s, hit) : true;
 }
 static bool new_CheckSideImpact(void* s, void* hit) {
-    if (g_NoCollision.load() || g_NoImpact.load()) {
-        TRACE_CALL("CharacterMotor.CheckSideImpact");
-        TRACE_EXIT("CharacterMotor.CheckSideImpact");
+    if (g_NoCollision.load() || g_NoImpact.load() || g_NoBoundaryImpact.load()) {
         return false;
     }
     return old_CheckSideImpact ? old_CheckSideImpact(s, hit) : true;
 }
 static void new_NotifySideImpact(void* s, int h, void* e, void* ent) {
-    if (g_NoCollision.load() || g_NoBoundaryImpact.load()) {
-        TRACE_CALL("CharacterMotor.NotifySideImpact");
-        TRACE_EXIT("CharacterMotor.NotifySideImpact");
+    if (g_NoCollision.load() || g_NoImpact.load() || g_NoBoundaryImpact.load()) {
         return;
     }
     if (old_NotifySideImpact) old_NotifySideImpact(s, h, e, ent);
@@ -626,7 +594,6 @@ static void new_AddPoints(void* s, double p) {
     if (old_AddPoints) old_AddPoints(s, b > 0 ? p + (double)b : p);
 }
 static void new_UpdatePowers(void* s) {
-    // Feature 140: Infinite Powerup → skip timer decrement
     if (g_UnlimitedPowerTime.load()) return;
     if (old_UpdatePowers) old_UpdatePowers(s);
 }
@@ -654,23 +621,18 @@ static void new_HandlePointsEarned(void* s) {
 }
 
 // ================================================================
-//  HEARTBEAT
+//  HEARTBEAT & PHASES
 // ================================================================
 static void* heartbeat_thread(void*) {
     int n = 0;
     while (true) {
         sleep(60); n++;
-        LOGI("[HEARTBEAT %02d] alive", n);
         if (n == 1) markStartupComplete();
     }
     return nullptr;
 }
 
-// ================================================================
-//  PHASES
-// ================================================================
 static void installPhase1() {
-    LOGI("=== PHASE 1: core hooks ===");
     {
         auto C = new LoadClass(OBFUSCATE("SYBO.RunnerCore.Character"), OBFUSCATE("CharacterMotorAbilities"));
         if (C && C->thisclass) {
@@ -704,19 +666,23 @@ static void installPhase1() {
         }
     }
     {
+        // RESTORED: CharacterController.get_detectCollisions
+        auto C = new LoadClass(OBFUSCATE("UnityEngine"), OBFUSCATE("CharacterController"));
+        if (C && C->thisclass) {
+            DWORD o = C->GetMethodOffsetByName(OBFUSCATE("get_detectCollisions"),0);
+            if (o) HOOK_CHECK("CharacterController","get_detectCollisions",o,(void*)new_get_detectCollisions,old_get_detectCollisions);
+        }
+    }
+    {
         auto C = new LoadClass(OBFUSCATE("SYBO.Subway.Core.ProfileData"), OBFUSCATE("WalletModel"));
         if (C && C->thisclass) {
             DWORD o = C->GetMethodOffsetByName(OBFUSCATE("GetCurrency"),1);
             if (o) HOOK_CHECK("WalletModel","GetCurrency",o,(void*)new_GetCurrency,old_GetCurrency);
         }
     }
-    LOGI("=== PHASE 1 complete ===");
 }
 
 static void installPhase2() {
-    LOGI("=== PHASE 2: IAP capture + impact hooks ===");
-
-    // Capture Currency.get_IsIAP address (no hook, memory-patch only)
     {
         auto C = new LoadClass(OBFUSCATE("SYBO.Subway.Core.CommonData"), OBFUSCATE("Currency"));
         if (C && C->thisclass) {
@@ -725,15 +691,10 @@ static void installPhase2() {
                 g_IsIAPAddr = (void*)(uintptr_t)o;
                 memcpy(g_IsIAPOriginal, g_IsIAPAddr, 16);
                 g_IsIAPOrigSaved.store(true);
-                uint32_t* c = (uint32_t*)g_IsIAPAddr;
-                LOGI("[CAPTURE] get_IsIAP @ %p  [%08x %08x %08x %08x]",
-                     g_IsIAPAddr, c[0], c[1], c[2], c[3]);
                 if (g_UnlimitedShop.load()) applyIsIAPPatch(true);
-            } else LOGE("[MISS] Currency.get_IsIAP offset not found");
-        } else LOGE("[MISS] Currency class not found");
+            }
+        }
     }
-
-    // CharacterMotor — gravity, movement, impact checks
     {
         auto C = new LoadClass(OBFUSCATE("SYBO.RunnerCore.Character"), OBFUSCATE("CharacterMotor"));
         if (C && C->thisclass) {
@@ -750,23 +711,17 @@ static void installPhase2() {
             if (o5) HOOK_CHECK("CharacterMotor","CheckSideImpact",o5,(void*)new_CheckSideImpact,old_CheckSideImpact);
         }
     }
-    LOGI("=== PHASE 2 complete ===");
 }
 
 static void installPhase3() {
-    LOGI("=== PHASE 3: camera ===");
-    {
-        auto C = new LoadClass(OBFUSCATE("SYBO.Subway"), OBFUSCATE("CameraGroundedModifier"));
-        if (C && C->thisclass) {
-            DWORD o = C->GetMethodOffsetByName(OBFUSCATE("Apply"),1);
-            if (o) HOOK_CHECK("CameraGroundedModifier","Apply",o,(void*)new_CameraApply,old_CameraApply);
-        }
+    auto C = new LoadClass(OBFUSCATE("SYBO.Subway"), OBFUSCATE("CameraGroundedModifier"));
+    if (C && C->thisclass) {
+        DWORD o = C->GetMethodOffsetByName(OBFUSCATE("Apply"),1);
+        if (o) HOOK_CHECK("CameraGroundedModifier","Apply",o,(void*)new_CameraApply,old_CameraApply);
     }
-    LOGI("=== PHASE 3 complete ===");
 }
 
 static void installPhase4() {
-    LOGI("=== PHASE 4: speed / air jump ===");
     auto C = new LoadClass(OBFUSCATE("SYBO.RunnerCore.Character"), OBFUSCATE("CharacterMotorAbilities"));
     if (C && C->thisclass) {
         DWORD o1 = C->GetMethodOffsetByName(OBFUSCATE("get_MinSpeed"),0);
@@ -776,11 +731,9 @@ static void installPhase4() {
         if (o2) HOOK_CHECK("CharacterMotorAbilities","get_MaxSpeed",o2,(void*)new_get_MaxSpeed,old_get_MaxSpeed);
         if (o3) HOOK_CHECK("CharacterMotorAbilities","get_AirJumpHeight",o3,(void*)new_get_AirJumpHeight,old_get_AirJumpHeight);
     }
-    LOGI("=== PHASE 4 complete ===");
 }
 
 static void installPhase5() {
-    LOGI("=== PHASE 5: character props ===");
     auto C = new LoadClass(OBFUSCATE("SYBO.Subway"), OBFUSCATE("CharacterPropsController"));
     if (!C || !C->thisclass) return;
 
@@ -796,11 +749,9 @@ static void installPhase5() {
     { DWORD o = C->GetMethodOffsetByName(OBFUSCATE("ShowHoverboard"),1);
       if (o) HOOK_CHECK("CharacterPropsController","ShowHoverboard",o,(void*)new_ShowHoverboard,old_ShowHoverboard);
       usleep(100*1000); }
-    LOGI("=== PHASE 5 complete ===");
 }
 
 static void installPhase6() {
-    LOGI("=== PHASE 6: misc ===");
     {
         auto C = new LoadClass(OBFUSCATE("SYBO.Subway"), OBFUSCATE("MovingTrain"));
         if (C && C->thisclass) {
@@ -869,19 +820,13 @@ static void installPhase6() {
             if (o) HOOK_CHECK("GameScreenScoreCounter","HandleOnPointsEarned",o,(void*)new_HandlePointsEarned,old_HandlePointsEarned);
         }
     }
-    LOGI("=== PHASE 6 complete ===");
 }
 
-// ================================================================
-//  HACK THREAD
-// ================================================================
 void* hack_thread(void*) {
     g_BootStep = 3;
-    LOGI(">>> hack_thread started <<<");
     while (!isLibraryLoaded(LIB)) sleep(1);
     sleep(3);
     g_BootStep = 4;
-    LOGI(">>> library loaded <<<");
 
     g_BootStep = 5;
     if (safeModeFileExists()) { g_BootStep = 14; return nullptr; }
@@ -896,9 +841,7 @@ void* hack_thread(void*) {
     g_BootStep = 11; installPhase6(); usleep(500*1000);
 
     g_BootStep = 13;
-    LOGI(">>> installing GLES render hooks (chams) <<<");
     RenderHook();
-    LOGI(">>> GLES hooks done <<<");
 
     pthread_t hb;
     pthread_create(&hb, nullptr, heartbeat_thread, nullptr);
@@ -908,20 +851,14 @@ void* hack_thread(void*) {
     return nullptr;
 }
 
-// ================================================================
-//  JNI — FEATURE LIST (new organized, ≤ 2-word toggle names)
-// ================================================================
 jobjectArray GetFeatureList(JNIEnv* env, jobject) {
     jobjectArray ret;
     const char* features[] = {
-
-        // ── Mode buttons (top of Main tab) ──
         OBFUSCATE("800_ButtonOnOff_Simple Mode"),
         OBFUSCATE("801_ButtonOnOff_Max Mode"),
         OBFUSCATE("802_ButtonOnOff_Ultra Max Mode"),
         OBFUSCATE("803_ButtonOnOff_Reset All Features"),
 
-        // ── Player ──
         OBFUSCATE("Category_Player"),
         OBFUSCATE("102_SeekBar_Max Jumps_0_999"),
         OBFUSCATE("103_SeekBar_Jump Height_0_200"),
@@ -930,7 +867,6 @@ jobjectArray GetFeatureList(JNIEnv* env, jobject) {
         OBFUSCATE("134_SeekBar_Air Jump_0_200"),
         OBFUSCATE("160_SeekBar_Player Speed_0_200"),
 
-        // ── Power (140 toggle + 145 slider combined) ──
         OBFUSCATE("Category_Power"),
         OBFUSCATE("140_Toggle_Infinite Powerup"),
         OBFUSCATE("145_SeekBar_Power Duration_0_999"),
@@ -941,21 +877,17 @@ jobjectArray GetFeatureList(JNIEnv* env, jobject) {
         OBFUSCATE("137_Toggle_Hide Magnet"),
         OBFUSCATE("138_Toggle_Hide Board"),
 
-        // ── Score ──
         OBFUSCATE("Category_Score"),
         OBFUSCATE("107_SeekBar_Score Boost_0_999"),
         OBFUSCATE("143_Toggle_Freeze Coins"),
         OBFUSCATE("144_Toggle_Freeze Score"),
 
-        // ── Safety ──
         OBFUSCATE("Category_Safety"),
         OBFUSCATE("108_Toggle_God Mode"),
-        OBFUSCATE("998_SmallTextView_⚠ Enable before game starts"),
         OBFUSCATE("132_Toggle_No Impact"),
         OBFUSCATE("131_Toggle_No Wall"),
         OBFUSCATE("104_Toggle_Auto Revive"),
 
-        // ── Shop ──
         OBFUSCATE("Category_Shop"),
         OBFUSCATE("110_Toggle_Unlimited Coins"),
         OBFUSCATE("150_Toggle_Free IAP"),
@@ -964,15 +896,12 @@ jobjectArray GetFeatureList(JNIEnv* env, jobject) {
         OBFUSCATE("153_SeekBar_Extra Score_0_9999"),
         OBFUSCATE("154_Toggle_Revive Reward"),
 
-        // ── Camera ──
         OBFUSCATE("Category_Camera"),
         OBFUSCATE("161_Spinner_Camera Mode_Normal,Follow Y,Stop Vertical"),
 
-        // ── World ──
         OBFUSCATE("Category_World"),
         OBFUSCATE("142_Toggle_Freeze Trains"),
 
-        // ── Chams ──
         OBFUSCATE("Category_Chams"),
         OBFUSCATE("119_Toggle_Enable Chams"),
         OBFUSCATE("120_Spinner_Chams Mode_Off,Solid,X-Ray,Hybrid"),
@@ -988,9 +917,6 @@ jobjectArray GetFeatureList(JNIEnv* env, jobject) {
     return ret;
 }
 
-// ================================================================
-//  JNI — CHANGES
-// ================================================================
 void Changes(JNIEnv*, jclass, jobject, jint featNum, jstring, jint value, jlong, jboolean boolean, jstring) {
     switch (featNum) {
         case 102: g_JumpLimit.store(value);        break;
@@ -998,37 +924,24 @@ void Changes(JNIEnv*, jclass, jobject, jint featNum, jstring, jint value, jlong,
         case 104: g_AutoRevive.store(boolean);     break;
         case 106: g_FastLaneChange.store(boolean); break;
         case 107: g_ScoreMultiplier.store(value);  break;
-
-        // Feature 108 God Mode — impact checks + notify no-op
-        case 108: g_NoCollision.store(boolean);    break;
-
+        case 108: g_NoCollision.store(boolean);    break; // God Mode
         case 110: g_UnlimitedCoins.store(boolean); break;
-
         case 130: g_NoGravity.store(boolean);            break;
-        case 131: g_NoBoundaryImpact.store(boolean);     break;
-        case 132: g_NoImpact.store(boolean);             break;
+        case 131: g_NoBoundaryImpact.store(boolean);     break; // No Wall
+        case 132: g_NoImpact.store(boolean);             break; // No Impact
         case 133: g_FreezeCharacter.store(boolean);      break;
         case 134: g_AirJumpHeight.store(value);          break;
         case 135: g_HideJetpack.store(boolean);          break;
         case 136: g_HidePogostick.store(boolean);        break;
         case 137: g_HideMagnet.store(boolean);           break;
         case 138: g_HideHoverboard.store(boolean);       break;
-
         case 140: g_UnlimitedPowerTime.store(boolean);   break;
         case 141: g_UnlimitedJetpackTime.store(boolean); break;
         case 142: g_StopTrains.store(boolean);           break;
         case 143: g_FreezeCoins.store(boolean);          break;
         case 144: g_FreezeScore.store(boolean);          break;
-
-        // Feature 145 Power Duration slider (replaces 105)
         case 145: g_PowerDuration.store(value);          break;
-
-        // Feature 150 Free IAP — memory patch
-        case 150: {
-            g_UnlimitedShop.store(boolean);
-            applyIsIAPPatch(boolean);
-        } break;
-
+        case 150: g_UnlimitedShop.store(boolean); applyIsIAPPatch(boolean); break;
         case 151: g_AddCoinsBonus.store(value);          break;
         case 152: g_AddKeysBonus.store(value);           break;
         case 153: g_AddScoreBonus.store(value);          break;
@@ -1042,101 +955,50 @@ void Changes(JNIEnv*, jclass, jobject, jint featNum, jstring, jint value, jlong,
         case 127: g_MaxDistance = (float)value; break;
         case 121: enableRainbow = boolean;      break;
         case 122: enableRainbowWall = boolean;  break;
-
-        // ── Mode buttons ──
-        case 800: { // Simple Mode
-            g_AutoRevive.store(boolean);
-            g_UnlimitedCoins.store(boolean);
+        case 800: {
+            g_AutoRevive.store(boolean); g_UnlimitedCoins.store(boolean);
         } break;
-
-        case 801: { // Max Mode
-            g_AutoRevive.store(boolean);
-            g_FastLaneChange.store(boolean);
-            g_UnlimitedCoins.store(boolean);
-            if (boolean) {
-                g_JumpLimit.store(100); g_JumpHeight.store(50);
-                g_PowerDuration.store(100); g_ScoreMultiplier.store(10);
-            } else {
-                g_JumpLimit.store(0); g_JumpHeight.store(0);
-                g_PowerDuration.store(0); g_ScoreMultiplier.store(0);
-            }
+        case 801: {
+            g_AutoRevive.store(boolean); g_FastLaneChange.store(boolean); g_UnlimitedCoins.store(boolean);
+            if (boolean) { g_JumpLimit.store(100); g_JumpHeight.store(50); g_PowerDuration.store(100); g_ScoreMultiplier.store(10); }
+            else { g_JumpLimit.store(0); g_JumpHeight.store(0); g_PowerDuration.store(0); g_ScoreMultiplier.store(0); }
         } break;
-
-        case 802: { // Ultra Max Mode
-            g_AutoRevive.store(boolean);
-            g_FastLaneChange.store(boolean);
-            g_UnlimitedCoins.store(boolean);
-            g_NoCollision.store(boolean);   // God Mode ON
-            g_UnlimitedShop.store(boolean); // Free IAP ON
-            applyIsIAPPatch(boolean);
-            if (boolean) {
-                g_JumpLimit.store(999); g_JumpHeight.store(200);
-                g_PowerDuration.store(999); g_ScoreMultiplier.store(999);
-            } else {
-                g_JumpLimit.store(0); g_JumpHeight.store(0);
-                g_PowerDuration.store(0); g_ScoreMultiplier.store(0);
-            }
+        case 802: {
+            g_AutoRevive.store(boolean); g_FastLaneChange.store(boolean);
+            g_UnlimitedCoins.store(boolean); g_NoCollision.store(boolean);
+            g_UnlimitedShop.store(boolean); applyIsIAPPatch(boolean);
+            if (boolean) { g_JumpLimit.store(999); g_JumpHeight.store(200); g_PowerDuration.store(999); g_ScoreMultiplier.store(999); }
+            else { g_JumpLimit.store(0); g_JumpHeight.store(0); g_PowerDuration.store(0); g_ScoreMultiplier.store(0); }
         } break;
-
-        case 803: { // Reset All Features
-            g_AutoRevive.store(false);
-            g_FastLaneChange.store(false);
-            g_UnlimitedCoins.store(false);
-            g_NoCollision.store(false);
-            g_JumpLimit.store(0);
-            g_JumpHeight.store(0);
-            g_PowerDuration.store(0);
-            g_ScoreMultiplier.store(0);
-            g_NoImpact.store(false);
-            g_NoGravity.store(false);
-            g_FreezeCharacter.store(false);
-            g_CharacterSpeed.store(0);
-            g_AirJumpHeight.store(0);
-            g_CameraMode.store(0);
-            g_NoBoundaryImpact.store(false);
-            g_HideJetpack.store(false);
-            g_HidePogostick.store(false);
-            g_HideMagnet.store(false);
-            g_HideHoverboard.store(false);
-            g_StopTrains.store(false);
-            g_AddCoinsBonus.store(0);
-            g_AddKeysBonus.store(0);
-            g_AddScoreBonus.store(0);
-            g_UnlimitedPowerTime.store(false);
-            g_UnlimitedJetpackTime.store(false);
-            g_ReviveReward.store(false);
-            g_FreezeCoins.store(false);
-            g_FreezeScore.store(false);
-            // Revert IAP patch if currently active
-            if (g_UnlimitedShop.load()) {
-                g_UnlimitedShop.store(false);
-                applyIsIAPPatch(false);
-            }
+        case 803: {
+            g_AutoRevive.store(false); g_FastLaneChange.store(false);
+            g_UnlimitedCoins.store(false); g_NoCollision.store(false);
+            g_JumpLimit.store(0); g_JumpHeight.store(0); g_PowerDuration.store(0); g_ScoreMultiplier.store(0);
+            g_NoImpact.store(false); g_NoGravity.store(false); g_FreezeCharacter.store(false);
+            g_CharacterSpeed.store(0); g_AirJumpHeight.store(0); g_CameraMode.store(0);
+            g_NoBoundaryImpact.store(false); g_HideJetpack.store(false); g_HidePogostick.store(false);
+            g_HideMagnet.store(false); g_HideHoverboard.store(false); g_StopTrains.store(false);
+            g_AddCoinsBonus.store(0); g_AddKeysBonus.store(0); g_AddScoreBonus.store(0);
+            g_UnlimitedPowerTime.store(false); g_UnlimitedJetpackTime.store(false);
+            g_ReviveReward.store(false); g_FreezeCoins.store(false); g_FreezeScore.store(false);
+            if (g_UnlimitedShop.load()) { g_UnlimitedShop.store(false); applyIsIAPPatch(false); }
         } break;
-
         default: break;
     }
 }
 
-// ================================================================
-//  STUBS
-// ================================================================
 extern "C" JNIEXPORT void JNICALL Java_com_android_support_Menu_Draw(JNIEnv*, jclass, jobject, jobject) { }
 extern "C" JNIEXPORT void JNICALL Java_com_android_support_Menu_SetTeleportTargetNorm(JNIEnv*, jclass, jfloat, jfloat) { }
 extern "C" JNIEXPORT jboolean JNICALL Java_com_android_support_Menu_GetTeleportEnabled(JNIEnv*, jclass) { return JNI_FALSE; }
 extern "C" JNIEXPORT jboolean JNICALL Java_com_android_support_Menu_IsSmoothTeleportActive(JNIEnv*, jclass) { return JNI_FALSE; }
 extern "C" JNIEXPORT void JNICALL Java_com_android_support_Main_setNativeCrashDir(JNIEnv*, jclass, jstring) { }
 
-// ================================================================
-//  CONSTRUCTOR
-// ================================================================
 __attribute__((constructor))
 void lib_main() {
     g_BootStep = 0;
     initLogging();
     g_BootStep = 2;
     installCrashHandler();
-    LOGI("[BOOT] Crash handler installed");
     pthread_t ptid;
     pthread_create(&ptid, NULL, hack_thread, NULL);
 }
