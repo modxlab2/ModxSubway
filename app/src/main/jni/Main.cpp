@@ -170,10 +170,8 @@ static void crashHandler(int sig, siginfo_t* info, void* ctx) {
     safeWriteStr(g_LogFd,   hdr);
 
     char buf[256];
-
     safeWriteStr(g_CrashFd, "Signal  : "); safeWriteStr(g_CrashFd, sigName(sig)); safeWriteStr(g_CrashFd, "\n");
     safeWriteStr(g_LogFd,   "Signal  : "); safeWriteStr(g_LogFd,   sigName(sig)); safeWriteStr(g_LogFd,   "\n");
-
     safeWriteStr(g_CrashFd, "Step    : "); safeWriteStr(g_CrashFd, bootStepName(g_BootStep.load())); safeWriteStr(g_CrashFd, "\n");
     safeWriteStr(g_LogFd,   "Step    : "); safeWriteStr(g_LogFd,   bootStepName(g_BootStep.load())); safeWriteStr(g_LogFd,   "\n");
 
@@ -182,7 +180,6 @@ static void crashHandler(int sig, siginfo_t* info, void* ctx) {
         safeWriteStr(g_CrashFd, "Fault   : "); safeWriteStr(g_CrashFd, hex); safeWriteStr(g_CrashFd, "\n");
         safeWriteStr(g_LogFd,   "Fault   : "); safeWriteStr(g_LogFd,   hex); safeWriteStr(g_LogFd,   "\n");
     }
-
     if (g_CrashFd >= 0) fsync(g_CrashFd);
     if (g_LogFd   >= 0) fsync(g_LogFd);
 
@@ -301,14 +298,6 @@ static bool skipHookFile(const std::string& hookName) {
 
 // ================================================================
 //  PROLOGUE SAFETY CHECK
-//  ------------------------------------------------------------------
-//  A64HookFunction cannot safely hook tiny functions. Its trampoline
-//  redirects the copied RET to (original + 0x10), which lands PAST
-//  the function end → SIGILL.
-//
-//  This was the root cause of the past crash:
-//    Signal : SIGILL
-//    Fault  : 0x72cb5877a4  (= Currency.get_IsIAP + 0x10)
 // ================================================================
 static const char* checkFunctionSafety(void* addr) {
     if (!addr) return "null-addr";
@@ -331,51 +320,37 @@ static const char* checkFunctionSafety(void* addr) {
 }
 
 // ================================================================
-//  TIME
-// ================================================================
-static inline long long nowMs() {
-    return (long long) std::chrono::duration_cast<std::chrono::milliseconds>(
-        std::chrono::steady_clock::now().time_since_epoch()).count();
-}
-
-// ================================================================
 //  FEATURE FLAGS
 // ================================================================
 static std::atomic<int>  g_JumpLimit        {0};
 static std::atomic<int>  g_JumpHeight       {0};
 static std::atomic<bool> g_AutoRevive       {false};
-static std::atomic<int>  g_PowerDuration    {0};
+static std::atomic<int>  g_PowerDuration    {0};   // used by 145 slider (was 105)
 static std::atomic<bool> g_FastLaneChange   {false};
 static std::atomic<int>  g_ScoreMultiplier  {0};
-static std::atomic<bool> g_NoCollision      {false};
+static std::atomic<bool> g_NoCollision      {false};   // feature 108 God Mode
 static std::atomic<bool> g_UnlimitedCoins   {false};
-static std::atomic<long long> g_NoCollisionStartMs{0};
-
-// Free Shipping / Unlimited Shop — via MEMORY PATCH on get_IsIAP
-static std::atomic<bool> g_UnlimitedShop       {false};
-
-// No Impact (Front + Side) — single toggle, controls two hooks
-static std::atomic<bool> g_NoImpact            {false};
-
-static std::atomic<bool> g_NoGravity           {false};
-static std::atomic<bool> g_FreezeCharacter     {false};
-static std::atomic<int>  g_CharacterSpeed      {0};
-static std::atomic<int>  g_AirJumpHeight       {0};
-static std::atomic<int>  g_CameraMode          {0};
-static std::atomic<bool> g_NoBoundaryImpact    {false};
-static std::atomic<bool> g_HideJetpack         {false};
-static std::atomic<bool> g_HidePogostick       {false};
-static std::atomic<bool> g_HideMagnet          {false};
-static std::atomic<bool> g_HideHoverboard      {false};
-static std::atomic<bool> g_StopTrains          {false};
-static std::atomic<int>  g_AddCoinsBonus       {0};
-static std::atomic<int>  g_AddKeysBonus        {0};
-static std::atomic<int>  g_AddScoreBonus       {0};
-static std::atomic<bool> g_UnlimitedPowerTime  {false};
-static std::atomic<bool> g_UnlimitedJetpackTime{false};
-static std::atomic<bool> g_ReviveReward        {false};
-static std::atomic<bool> g_FreezeCoins         {false};
-static std::atomic<bool> g_FreezeScore         {false};
+static std::atomic<bool> g_UnlimitedShop    {false};   // feature 150 Free IAP
+static std::atomic<bool> g_NoImpact         {false};   // feature 132 No Impact
+static std::atomic<bool> g_NoGravity        {false};
+static std::atomic<bool> g_FreezeCharacter  {false};
+static std::atomic<int>  g_CharacterSpeed   {0};
+static std::atomic<int>  g_AirJumpHeight    {0};
+static std::atomic<int>  g_CameraMode       {0};
+static std::atomic<bool> g_NoBoundaryImpact {false};   // feature 131 No Wall
+static std::atomic<bool> g_HideJetpack      {false};
+static std::atomic<bool> g_HidePogostick    {false};
+static std::atomic<bool> g_HideMagnet       {false};
+static std::atomic<bool> g_HideHoverboard   {false};
+static std::atomic<bool> g_StopTrains       {false};
+static std::atomic<int>  g_AddCoinsBonus    {0};
+static std::atomic<int>  g_AddKeysBonus     {0};
+static std::atomic<int>  g_AddScoreBonus    {0};
+static std::atomic<bool> g_UnlimitedPowerTime  {false};   // feature 140 Infinite Powerup
+static std::atomic<bool> g_UnlimitedJetpackTime{false};   // feature 141 Infinite Jetpack
+static std::atomic<bool> g_ReviveReward     {false};
+static std::atomic<bool> g_FreezeCoins      {false};
+static std::atomic<bool> g_FreezeScore      {false};
 
 // ================================================================
 //  HOOK MACROS
@@ -422,10 +397,10 @@ static bool  (*old_IsAutoReviveEnabled)(void*)                = nullptr;
 static float (*old_GetDuration)(void*, int)                   = nullptr;
 static float (*old_get_LaneChangeDuration)(void*)             = nullptr;
 static int   (*old_get_BaseMultiplierSum)(void*)              = nullptr;
-static bool  (*old_get_detectCollisions)(void*)               = nullptr;
 static int   (*old_GetCurrency)(void*, int)                   = nullptr;
 
-// NOTE: No old_get_IsIAP — we use memory patch, not hook (see applyIsIAPPatch)
+// NOTE: old_get_IsIAP — NOT hooked (uses memory patch)
+// NOTE: old_get_detectCollisions — REMOVED (broken approach; replaced by impact checks)
 
 static void   (*old_ApplyGravity)(void*)                      = nullptr;
 static float  (*old_get_MinSpeed)(void*)                      = nullptr;
@@ -434,8 +409,6 @@ static void   (*old_UpdateMovement)(void*)                    = nullptr;
 static float  (*old_get_AirJumpHeight)(void*)                 = nullptr;
 static bool   (*old_CameraApply)(void*, void*)                = nullptr;
 static void   (*old_NotifySideImpact)(void*, int, void*, void*)= nullptr;
-
-// NEW: No Impact hooks (Front + Side)
 static bool   (*old_CheckFrontalImpact)(void*, void*)         = nullptr;
 static bool   (*old_CheckSideImpact)(void*, void*)            = nullptr;
 
@@ -456,19 +429,7 @@ static void   (*old_HandleCoinsPickedUp)(void*)               = nullptr;
 static void   (*old_HandlePointsEarned)(void*)                = nullptr;
 
 // ================================================================
-//  get_IsIAP — MEMORY PATCH STORAGE
-//  ------------------------------------------------------------------
-//  Original 4 instructions (b9401008 7100291f 1a9f17e0 d65f03c0):
-//    LDR  W8, [X0, #0x10]
-//    CMP  W8, #0xA
-//    CSET W0, EQ
-//    RET
-//
-//  Patch (MOV W0, #0; RET):
-//    0x52800000  MOV W0, #0
-//    0xD65F03C0  RET
-//
-//  Hex (little-endian): "00008052C0035FD6"
+//  get_IsIAP — MEMORY PATCH
 // ================================================================
 static void*             g_IsIAPAddr = nullptr;
 static uint8_t           g_IsIAPOriginal[16] = {0};
@@ -483,8 +444,6 @@ static void bytesToHex(const uint8_t* bytes, size_t len, char* out) {
     out[len*2] = '\0';
 }
 
-// Apply or revert the get_IsIAP → return false patch.
-// Safe to call any time (falls through if address not captured yet).
 static void applyIsIAPPatch(bool enable) {
     if (!g_IsIAPAddr) {
         LOGW("[PATCH DEFER] get_IsIAP address not ready (enable=%d)", (int)enable);
@@ -495,11 +454,9 @@ static void applyIsIAPPatch(bool enable) {
         return;
     }
 
-    // ★ FIX: void* → uintptr_t explicit cast (required by MemoryPatch API)
     const uintptr_t patchAddr = (uintptr_t)g_IsIAPAddr;
 
     if (enable) {
-        // MOV W0, #0; RET   (little-endian hex)
         MemoryPatch patch = MemoryPatch::createWithHex(
                 patchAddr, std::string("00008052C0035FD6"));
         if (patch.isValid()) {
@@ -532,48 +489,58 @@ static void applyIsIAPPatch(bool enable) {
 // ================================================================
 static int new_get_JumpLimit(void* s) {
     int v = g_JumpLimit.load();
-    if (v > 0) { TRACE_CALL("CharacterMotorAbilities.get_JumpLimit"); TRACE_EXIT("CharacterMotorAbilities.get_JumpLimit"); return v; }
+    if (v > 0) return v;
     return old_get_JumpLimit ? old_get_JumpLimit(s) : 0;
 }
 static float new_get_JumpHeight(void* s) {
     int v = g_JumpHeight.load();
-    if (v > 0) { TRACE_CALL("CharacterMotorAbilities.get_JumpHeight"); TRACE_EXIT("CharacterMotorAbilities.get_JumpHeight"); return (float)v; }
+    if (v > 0) return (float)v;
     return old_get_JumpHeight ? old_get_JumpHeight(s) : 0.0f;
 }
 static float new_get_LaneChangeDuration(void* s) {
-    if (g_FastLaneChange.load()) { TRACE_CALL("CharacterMotorAbilities.get_LaneChangeDuration"); TRACE_EXIT("CharacterMotorAbilities.get_LaneChangeDuration"); return 0.0f; }
+    if (g_FastLaneChange.load()) return 0.0f;
     return old_get_LaneChangeDuration ? old_get_LaneChangeDuration(s) : 0.0f;
 }
 static bool new_IsAutoReviveEnabled(void* s) {
-    if (g_AutoRevive.load()) { TRACE_CALL("StumbleBehaviour.IsAutoReviveEnabled"); TRACE_EXIT("StumbleBehaviour.IsAutoReviveEnabled"); return true; }
+    if (g_AutoRevive.load()) return true;
     return old_IsAutoReviveEnabled ? old_IsAutoReviveEnabled(s) : false;
 }
 static float new_GetDuration(void* s, int level) {
+    // Feature 145 slider: return custom duration when set
     int v = g_PowerDuration.load();
-    if (v > 0) { TRACE_CALL("PowerConfig.GetDuration"); TRACE_EXIT("PowerConfig.GetDuration"); return (float)v; }
+    if (v > 0) return (float)v;
     return old_GetDuration ? old_GetDuration(s, level) : 0.0f;
 }
 static int new_get_BaseMultiplierSum(void* s) {
     int v = g_ScoreMultiplier.load();
-    if (v > 0) { TRACE_CALL("ScoreMultiplierManager.get_BaseMultiplierSum"); TRACE_EXIT("ScoreMultiplierManager.get_BaseMultiplierSum"); return v; }
+    if (v > 0) return v;
     return old_get_BaseMultiplierSum ? old_get_BaseMultiplierSum(s) : 0;
 }
-static bool new_get_detectCollisions(void* s) {
-    if (g_NoCollision.load()) {
-        TRACE_CALL("CharacterController.get_detectCollisions"); TRACE_EXIT("CharacterController.get_detectCollisions");
-        long long st = g_NoCollisionStartMs.load();
-        if (st > 0 && (nowMs() - st) < 1000) return false;
-    }
-    return old_get_detectCollisions ? old_get_detectCollisions(s) : true;
-}
 static int new_GetCurrency(void* s, int t) {
-    if (g_UnlimitedCoins.load()) { TRACE_CALL("WalletModel.GetCurrency"); TRACE_EXIT("WalletModel.GetCurrency"); return 99999999; }
+    if (g_UnlimitedCoins.load()) return 99999999;
     return old_GetCurrency ? old_GetCurrency(s, t) : 0;
 }
 
-// ---- No Impact (Front + Side) ----
+// ================================================================
+//  IMPACT CHECKS — PROFESSIONAL NO-IMPACT / GOD MODE
+//  ------------------------------------------------------------------
+//  Instead of hooking `get_detectCollisions` (returns global flag,
+//  breaks coin collection, toggle doesn't restore), we hook the
+//  per-obstacle impact checks:
+//
+//    CheckFrontalImpact  → called when character should take frontal damage
+//    CheckSideImpact     → called when character should take side damage
+//    NotifySideImpact    → called when character should be pushed back by wall
+//
+//  Returning false / no-op → survives obstacle, but coins still collect
+//  (item pickups use trigger colliders, not these checks).
+//
+//  108 God Mode  (g_NoCollision)  → impact checks false + notify no-op
+//  132 No Impact (g_NoImpact)     → impact checks false
+//  131 No Wall   (g_NoBoundaryImpact) → notify no-op
+// ================================================================
 static bool new_CheckFrontalImpact(void* s, void* hit) {
-    if (g_NoImpact.load()) {
+    if (g_NoCollision.load() || g_NoImpact.load()) {
         TRACE_CALL("CharacterMotor.CheckFrontalImpact");
         TRACE_EXIT("CharacterMotor.CheckFrontalImpact");
         return false;
@@ -581,111 +548,108 @@ static bool new_CheckFrontalImpact(void* s, void* hit) {
     return old_CheckFrontalImpact ? old_CheckFrontalImpact(s, hit) : true;
 }
 static bool new_CheckSideImpact(void* s, void* hit) {
-    if (g_NoImpact.load()) {
+    if (g_NoCollision.load() || g_NoImpact.load()) {
         TRACE_CALL("CharacterMotor.CheckSideImpact");
         TRACE_EXIT("CharacterMotor.CheckSideImpact");
         return false;
     }
     return old_CheckSideImpact ? old_CheckSideImpact(s, hit) : true;
 }
-
-static void new_ApplyGravity(void* s) {
-    if (g_NoGravity.load()) { TRACE_CALL("CharacterMotor.ApplyGravity"); TRACE_EXIT("CharacterMotor.ApplyGravity"); return; }
-    if (old_ApplyGravity) old_ApplyGravity(s);
-}
-static float new_get_MinSpeed(void* s) {
-    int v = g_CharacterSpeed.load();
-    if (v > 0) { TRACE_CALL("CharacterMotorAbilities.get_MinSpeed"); TRACE_EXIT("CharacterMotorAbilities.get_MinSpeed"); return (float)v; }
-    return old_get_MinSpeed ? old_get_MinSpeed(s) : 0.0f;
-}
-static float new_get_MaxSpeed(void* s) {
-    int v = g_CharacterSpeed.load();
-    if (v > 0) { TRACE_CALL("CharacterMotorAbilities.get_MaxSpeed"); TRACE_EXIT("CharacterMotorAbilities.get_MaxSpeed"); return (float)v; }
-    return old_get_MaxSpeed ? old_get_MaxSpeed(s) : 0.0f;
-}
-static void new_UpdateMovement(void* s) {
-    if (g_FreezeCharacter.load()) { TRACE_CALL("CharacterMotor.UpdateMovement"); TRACE_EXIT("CharacterMotor.UpdateMovement"); return; }
-    if (old_UpdateMovement) old_UpdateMovement(s);
-}
-static float new_get_AirJumpHeight(void* s) {
-    int v = g_AirJumpHeight.load();
-    if (v > 0) { TRACE_CALL("CharacterMotorAbilities.get_AirJumpHeight"); TRACE_EXIT("CharacterMotorAbilities.get_AirJumpHeight"); return (float)v; }
-    return old_get_AirJumpHeight ? old_get_AirJumpHeight(s) : 0.0f;
-}
-static bool new_CameraApply(void* s, void* c) {
-    int m = g_CameraMode.load();
-    if (m == 1) { TRACE_CALL("CameraGroundedModifier.Apply"); TRACE_EXIT("CameraGroundedModifier.Apply"); return true; }
-    if (m == 2) { TRACE_CALL("CameraGroundedModifier.Apply"); TRACE_EXIT("CameraGroundedModifier.Apply"); return false; }
-    return old_CameraApply ? old_CameraApply(s, c) : false;
-}
 static void new_NotifySideImpact(void* s, int h, void* e, void* ent) {
-    if (g_NoBoundaryImpact.load()) {
-        TRACE_CALL("CharacterMotor.NotifySideImpact"); TRACE_EXIT("CharacterMotor.NotifySideImpact");
+    if (g_NoCollision.load() || g_NoBoundaryImpact.load()) {
+        TRACE_CALL("CharacterMotor.NotifySideImpact");
+        TRACE_EXIT("CharacterMotor.NotifySideImpact");
         return;
     }
     if (old_NotifySideImpact) old_NotifySideImpact(s, h, e, ent);
 }
+
+static void new_ApplyGravity(void* s) {
+    if (g_NoGravity.load()) return;
+    if (old_ApplyGravity) old_ApplyGravity(s);
+}
+static float new_get_MinSpeed(void* s) {
+    int v = g_CharacterSpeed.load();
+    if (v > 0) return (float)v;
+    return old_get_MinSpeed ? old_get_MinSpeed(s) : 0.0f;
+}
+static float new_get_MaxSpeed(void* s) {
+    int v = g_CharacterSpeed.load();
+    if (v > 0) return (float)v;
+    return old_get_MaxSpeed ? old_get_MaxSpeed(s) : 0.0f;
+}
+static void new_UpdateMovement(void* s) {
+    if (g_FreezeCharacter.load()) return;
+    if (old_UpdateMovement) old_UpdateMovement(s);
+}
+static float new_get_AirJumpHeight(void* s) {
+    int v = g_AirJumpHeight.load();
+    if (v > 0) return (float)v;
+    return old_get_AirJumpHeight ? old_get_AirJumpHeight(s) : 0.0f;
+}
+static bool new_CameraApply(void* s, void* c) {
+    int m = g_CameraMode.load();
+    if (m == 1) return true;
+    if (m == 2) return false;
+    return old_CameraApply ? old_CameraApply(s, c) : false;
+}
 static void new_ShowFlight(void* s, bool sh, int m) {
-    if (g_HideJetpack.load()) { TRACE_CALL("CharacterPropsController.ShowFlight"); TRACE_EXIT("CharacterPropsController.ShowFlight"); return; }
+    if (g_HideJetpack.load()) return;
     if (old_ShowFlight) old_ShowFlight(s, sh, m);
 }
 static void new_ShowPogostick(void* s, bool sh) {
-    if (g_HidePogostick.load()) { TRACE_CALL("CharacterPropsController.ShowPogostick"); TRACE_EXIT("CharacterPropsController.ShowPogostick"); return; }
+    if (g_HidePogostick.load()) return;
     if (old_ShowPogostick) old_ShowPogostick(s, sh);
 }
 static void new_ShowMagnet(void* s, bool sh) {
-    if (g_HideMagnet.load()) { TRACE_CALL("CharacterPropsController.ShowMagnet"); TRACE_EXIT("CharacterPropsController.ShowMagnet"); return; }
+    if (g_HideMagnet.load()) return;
     if (old_ShowMagnet) old_ShowMagnet(s, sh);
 }
 static void new_ShowHoverboard(void* s, bool rb) {
-    if (g_HideHoverboard.load()) { TRACE_CALL("CharacterPropsController.ShowHoverboard"); TRACE_EXIT("CharacterPropsController.ShowHoverboard"); return; }
+    if (g_HideHoverboard.load()) return;
     if (old_ShowHoverboard) old_ShowHoverboard(s, rb);
 }
 static void new_Displace(void* s) {
-    if (g_StopTrains.load()) { TRACE_CALL("MovingTrain.Displace"); TRACE_EXIT("MovingTrain.Displace"); return; }
+    if (g_StopTrains.load()) return;
     if (old_Displace) old_Displace(s);
 }
 static void new_Addcoins(void* s, int c) {
     int b = g_AddCoinsBonus.load();
-    if (b > 0) { TRACE_CALL("RunSessionData.Addcoins"); TRACE_EXIT("RunSessionData.Addcoins"); if (old_Addcoins) old_Addcoins(s, c + b); }
-    else { if (old_Addcoins) old_Addcoins(s, c); }
+    if (old_Addcoins) old_Addcoins(s, b > 0 ? c + b : c);
 }
 static void new_AddKeys(void* s, int k) {
     int b = g_AddKeysBonus.load();
-    if (b > 0) { TRACE_CALL("RunSessionData.AddKeys"); TRACE_EXIT("RunSessionData.AddKeys"); if (old_AddKeys) old_AddKeys(s, k + b); }
-    else { if (old_AddKeys) old_AddKeys(s, k); }
+    if (old_AddKeys) old_AddKeys(s, b > 0 ? k + b : k);
 }
 static void new_AddPoints(void* s, double p) {
     int b = g_AddScoreBonus.load();
-    if (b > 0) { TRACE_CALL("RunSessionData.AddPoints"); TRACE_EXIT("RunSessionData.AddPoints"); if (old_AddPoints) old_AddPoints(s, p + (double)b); }
-    else { if (old_AddPoints) old_AddPoints(s, p); }
+    if (old_AddPoints) old_AddPoints(s, b > 0 ? p + (double)b : p);
 }
 static void new_UpdatePowers(void* s) {
-    if (g_UnlimitedPowerTime.load()) { TRACE_CALL("CharacterPower.UpdatePowers"); TRACE_EXIT("CharacterPower.UpdatePowers"); return; }
+    // Feature 140: Infinite Powerup → skip timer decrement
+    if (g_UnlimitedPowerTime.load()) return;
     if (old_UpdatePowers) old_UpdatePowers(s);
 }
 static void new_MainUpdatePowers(void* s) {
-    if (g_UnlimitedPowerTime.load()) { TRACE_CALL("MainPowerSystem.UpdatePowers"); TRACE_EXIT("MainPowerSystem.UpdatePowers"); return; }
+    if (g_UnlimitedPowerTime.load()) return;
     if (old_MainUpdatePowers) old_MainUpdatePowers(s);
 }
 static void new_FinishFlight(void* s) {
-    if (g_UnlimitedJetpackTime.load()) { TRACE_CALL("FlyingState.FinishFlight"); TRACE_EXIT("FlyingState.FinishFlight"); return; }
+    if (g_UnlimitedJetpackTime.load()) return;
     if (old_FinishFlight) old_FinishFlight(s);
 }
 static void new_OnRevivedWithCurrency(void* s) {
-    if (g_ReviveReward.load()) { TRACE_CALL("MainReviveSystem.OnRevivedWithCurrency"); TRACE_EXIT("MainReviveSystem.OnRevivedWithCurrency"); }
     if (old_OnRevivedWithCurrency) old_OnRevivedWithCurrency(s);
 }
 static void new_MockRevivedWithCurrency(void* s) {
-    if (g_ReviveReward.load()) { TRACE_CALL("MockReviveSystem.OnRevivedWithCurrency"); TRACE_EXIT("MockReviveSystem.OnRevivedWithCurrency"); }
     if (old_MockRevivedWithCurrency) old_MockRevivedWithCurrency(s);
 }
 static void new_HandleCoinsPickedUp(void* s) {
-    if (g_FreezeCoins.load()) { TRACE_CALL("GameScreenCoinCounter.HandleOnCoinsPickedUp"); TRACE_EXIT("GameScreenCoinCounter.HandleOnCoinsPickedUp"); return; }
+    if (g_FreezeCoins.load()) return;
     if (old_HandleCoinsPickedUp) old_HandleCoinsPickedUp(s);
 }
 static void new_HandlePointsEarned(void* s) {
-    if (g_FreezeScore.load()) { TRACE_CALL("GameScreenScoreCounter.HandleOnPointsEarned"); TRACE_EXIT("GameScreenScoreCounter.HandleOnPointsEarned"); return; }
+    if (g_FreezeScore.load()) return;
     if (old_HandlePointsEarned) old_HandlePointsEarned(s);
 }
 
@@ -697,7 +661,7 @@ static void* heartbeat_thread(void*) {
     while (true) {
         sleep(60); n++;
         LOGI("[HEARTBEAT %02d] alive", n);
-        if (n == 1) { markStartupComplete(); }
+        if (n == 1) markStartupComplete();
     }
     return nullptr;
 }
@@ -740,13 +704,6 @@ static void installPhase1() {
         }
     }
     {
-        auto C = new LoadClass(OBFUSCATE("UnityEngine"), OBFUSCATE("CharacterController"));
-        if (C && C->thisclass) {
-            DWORD o = C->GetMethodOffsetByName(OBFUSCATE("get_detectCollisions"),0);
-            if (o) HOOK_CHECK("CharacterController","get_detectCollisions",o,(void*)new_get_detectCollisions,old_get_detectCollisions);
-        }
-    }
-    {
         auto C = new LoadClass(OBFUSCATE("SYBO.Subway.Core.ProfileData"), OBFUSCATE("WalletModel"));
         if (C && C->thisclass) {
             DWORD o = C->GetMethodOffsetByName(OBFUSCATE("GetCurrency"),1);
@@ -757,12 +714,9 @@ static void installPhase1() {
 }
 
 static void installPhase2() {
-    LOGI("=== PHASE 2: currency / gravity / movement / impact ===");
+    LOGI("=== PHASE 2: IAP capture + impact hooks ===");
 
-    // ================================================================
-    //  Currency.get_IsIAP — CAPTURE ADDRESS (do NOT hook!)
-    //  See checkFunctionSafety() comment for why.
-    // ================================================================
+    // Capture Currency.get_IsIAP address (no hook, memory-patch only)
     {
         auto C = new LoadClass(OBFUSCATE("SYBO.Subway.Core.CommonData"), OBFUSCATE("Currency"));
         if (C && C->thisclass) {
@@ -774,23 +728,12 @@ static void installPhase2() {
                 uint32_t* c = (uint32_t*)g_IsIAPAddr;
                 LOGI("[CAPTURE] get_IsIAP @ %p  [%08x %08x %08x %08x]",
                      g_IsIAPAddr, c[0], c[1], c[2], c[3]);
-
-                if (g_UnlimitedShop.load()) {
-                    LOGI("[PATCH] Deferred apply (toggle was ON before Phase 2)");
-                    applyIsIAPPatch(true);
-                }
-            } else {
-                LOGE("[MISS] Currency.get_IsIAP offset not found");
-            }
-        } else {
-            LOGE("[MISS] Currency class not found");
-        }
+                if (g_UnlimitedShop.load()) applyIsIAPPatch(true);
+            } else LOGE("[MISS] Currency.get_IsIAP offset not found");
+        } else LOGE("[MISS] Currency class not found");
     }
 
-    // ================================================================
-    //  CharacterMotor — gravity / movement / side notification
-    //                   + NEW: CheckFrontalImpact / CheckSideImpact
-    // ================================================================
+    // CharacterMotor — gravity, movement, impact checks
     {
         auto C = new LoadClass(OBFUSCATE("SYBO.RunnerCore.Character"), OBFUSCATE("CharacterMotor"));
         if (C && C->thisclass) {
@@ -966,59 +909,78 @@ void* hack_thread(void*) {
 }
 
 // ================================================================
-//  JNI — FEATURE LIST
+//  JNI — FEATURE LIST (new organized, ≤ 2-word toggle names)
 // ================================================================
 jobjectArray GetFeatureList(JNIEnv* env, jobject) {
     jobjectArray ret;
     const char* features[] = {
-        OBFUSCATE("800_ButtonOnOff_★ Simple Mode"),
-        OBFUSCATE("801_ButtonOnOff_★★ Max Mode"),
-        OBFUSCATE("802_ButtonOnOff_★★★ Ultra Max Mode"),
-        OBFUSCATE("803_ButtonOnOff_↺ Reset All Features"),
+
+        // ── Mode buttons (top of Main tab) ──
+        OBFUSCATE("800_ButtonOnOff_Simple Mode"),
+        OBFUSCATE("801_ButtonOnOff_Max Mode"),
+        OBFUSCATE("802_ButtonOnOff_Ultra Max Mode"),
+        OBFUSCATE("803_ButtonOnOff_Reset All Features"),
+
+        // ── Player ──
         OBFUSCATE("Category_Player"),
-        OBFUSCATE("102_SeekBar_Max Jump Count_0_999"),
-        OBFUSCATE("103_SeekBar_Jump Height Boost_0_200"),
-        OBFUSCATE("104_Toggle_Auto Revive"),
-        OBFUSCATE("130_Toggle_Low Gravity (Float)"),
-        OBFUSCATE("131_Toggle_No Wall Impact"),
-        OBFUSCATE("133_Toggle_Freeze Player Movement"),
-        OBFUSCATE("134_SeekBar_Air Jump Height Boost_0_200"),
-        OBFUSCATE("160_SeekBar_Player Speed Boost_0_200"),
-        OBFUSCATE("Category_Powerups"),
-        OBFUSCATE("105_SeekBar_Powerup Duration_0_999"),
-        OBFUSCATE("106_Toggle_Instant Lane Change"),
-        OBFUSCATE("135_Toggle_Hide Jetpack Visual"),
-        OBFUSCATE("136_Toggle_Hide Pogo Stick Visual"),
-        OBFUSCATE("137_Toggle_Hide Magnet Visual"),
-        OBFUSCATE("138_Toggle_Hide Hoverboard Visual"),
-        OBFUSCATE("140_Toggle_Infinite Powerup Duration"),
-        OBFUSCATE("141_Toggle_Infinite Jetpack Duration"),
+        OBFUSCATE("102_SeekBar_Max Jumps_0_999"),
+        OBFUSCATE("103_SeekBar_Jump Height_0_200"),
+        OBFUSCATE("130_Toggle_Low Gravity"),
+        OBFUSCATE("133_Toggle_Freeze Player"),
+        OBFUSCATE("134_SeekBar_Air Jump_0_200"),
+        OBFUSCATE("160_SeekBar_Player Speed_0_200"),
+
+        // ── Power (140 toggle + 145 slider combined) ──
+        OBFUSCATE("Category_Power"),
+        OBFUSCATE("140_Toggle_Infinite Powerup"),
+        OBFUSCATE("145_SeekBar_Power Duration_0_999"),
+        OBFUSCATE("141_Toggle_Infinite Jetpack"),
+        OBFUSCATE("106_Toggle_Fast Lane"),
+        OBFUSCATE("135_Toggle_Hide Jetpack"),
+        OBFUSCATE("136_Toggle_Hide Pogo"),
+        OBFUSCATE("137_Toggle_Hide Magnet"),
+        OBFUSCATE("138_Toggle_Hide Board"),
+
+        // ── Score ──
         OBFUSCATE("Category_Score"),
-        OBFUSCATE("107_SeekBar_Score Multiplier Boost_0_999"),
-        OBFUSCATE("143_Toggle_Freeze Coin Counter"),
-        OBFUSCATE("144_Toggle_Freeze Score Counter"),
-        OBFUSCATE("Category_Collision"),
-        OBFUSCATE("108_Toggle_God Mode (No Collision Detect)"),
-        OBFUSCATE("132_Toggle_No Impact (Front + Side)"),
+        OBFUSCATE("107_SeekBar_Score Boost_0_999"),
+        OBFUSCATE("143_Toggle_Freeze Coins"),
+        OBFUSCATE("144_Toggle_Freeze Score"),
+
+        // ── Safety ──
+        OBFUSCATE("Category_Safety"),
+        OBFUSCATE("108_Toggle_God Mode"),
+        OBFUSCATE("998_SmallTextView_⚠ Enable before game starts"),
+        OBFUSCATE("132_Toggle_No Impact"),
+        OBFUSCATE("131_Toggle_No Wall"),
+        OBFUSCATE("104_Toggle_Auto Revive"),
+
+        // ── Shop ──
         OBFUSCATE("Category_Shop"),
         OBFUSCATE("110_Toggle_Unlimited Coins"),
-        OBFUSCATE("150_Toggle_Unlock All Shop Items (Free IAP)"),
-        OBFUSCATE("151_SeekBar_Extra Coins Per Pickup_0_9999"),
-        OBFUSCATE("152_SeekBar_Extra Keys Per Pickup_0_9999"),
-        OBFUSCATE("153_SeekBar_Extra Score Per Point_0_9999"),
-        OBFUSCATE("154_Toggle_Revive Reward Multiplier"),
+        OBFUSCATE("150_Toggle_Free IAP"),
+        OBFUSCATE("151_SeekBar_Extra Coins_0_9999"),
+        OBFUSCATE("152_SeekBar_Extra Keys_0_9999"),
+        OBFUSCATE("153_SeekBar_Extra Score_0_9999"),
+        OBFUSCATE("154_Toggle_Revive Reward"),
+
+        // ── Camera ──
         OBFUSCATE("Category_Camera"),
-        OBFUSCATE("161_Spinner_Camera Mode_Normal,Follow Player Y,Stop Vertical"),
+        OBFUSCATE("161_Spinner_Camera Mode_Normal,Follow Y,Stop Vertical"),
+
+        // ── World ──
         OBFUSCATE("Category_World"),
-        OBFUSCATE("142_Toggle_Freeze Moving Trains"),
+        OBFUSCATE("142_Toggle_Freeze Trains"),
+
+        // ── Chams ──
         OBFUSCATE("Category_Chams"),
         OBFUSCATE("119_Toggle_Enable Chams"),
-        OBFUSCATE("120_Spinner_Chams Mode_Off,Solid Visible,X-Ray,Hybrid Opaque"),
-        OBFUSCATE("125_Spinner_Color Preset_Dark Green / Sky Blue,Neon Green / Red,Cyan / Magenta"),
-        OBFUSCATE("126_Spinner_Shader Target_Trains Only (_Displacement),All Objects (_MainTex)"),
+        OBFUSCATE("120_Spinner_Chams Mode_Off,Solid,X-Ray,Hybrid"),
+        OBFUSCATE("125_Spinner_Color Preset_Green Blue,Neon Red,Cyan Pink"),
+        OBFUSCATE("126_Spinner_Shader Target_Trains Only,All Objects"),
         OBFUSCATE("127_SeekBar_Max Distance_15_100"),
         OBFUSCATE("121_Toggle_Rainbow Visible"),
-        OBFUSCATE("122_Toggle_Rainbow In-Wall"),
+        OBFUSCATE("122_Toggle_Rainbow Wall"),
     };
     int n = (int)(sizeof(features)/sizeof(features[0]));
     ret = (jobjectArray) env->NewObjectArray(n, env->FindClass(OBFUSCATE("java/lang/String")), env->NewStringUTF(""));
@@ -1034,34 +996,34 @@ void Changes(JNIEnv*, jclass, jobject, jint featNum, jstring, jint value, jlong,
         case 102: g_JumpLimit.store(value);        break;
         case 103: g_JumpHeight.store(value);       break;
         case 104: g_AutoRevive.store(boolean);     break;
-        case 105: g_PowerDuration.store(value);    break;
         case 106: g_FastLaneChange.store(boolean); break;
         case 107: g_ScoreMultiplier.store(value);  break;
-        case 108: {
-            g_NoCollision.store(boolean);
-            if (boolean) g_NoCollisionStartMs.store(nowMs());
-            else g_NoCollisionStartMs.store(0);
-        } break;
-        case 110: g_UnlimitedCoins.store(boolean); break;
 
-        // ---- NEW: No Impact (Front + Side) ----
-        case 132: g_NoImpact.store(boolean);       break;
+        // Feature 108 God Mode — impact checks + notify no-op
+        case 108: g_NoCollision.store(boolean);    break;
+
+        case 110: g_UnlimitedCoins.store(boolean); break;
 
         case 130: g_NoGravity.store(boolean);            break;
         case 131: g_NoBoundaryImpact.store(boolean);     break;
+        case 132: g_NoImpact.store(boolean);             break;
         case 133: g_FreezeCharacter.store(boolean);      break;
         case 134: g_AirJumpHeight.store(value);          break;
         case 135: g_HideJetpack.store(boolean);          break;
         case 136: g_HidePogostick.store(boolean);        break;
         case 137: g_HideMagnet.store(boolean);           break;
         case 138: g_HideHoverboard.store(boolean);       break;
+
         case 140: g_UnlimitedPowerTime.store(boolean);   break;
         case 141: g_UnlimitedJetpackTime.store(boolean); break;
         case 142: g_StopTrains.store(boolean);           break;
         case 143: g_FreezeCoins.store(boolean);          break;
         case 144: g_FreezeScore.store(boolean);          break;
 
-        // ---- Unlimited Shop (Free IAP) — MEMORY PATCH ----
+        // Feature 145 Power Duration slider (replaces 105)
+        case 145: g_PowerDuration.store(value);          break;
+
+        // Feature 150 Free IAP — memory patch
         case 150: {
             g_UnlimitedShop.store(boolean);
             applyIsIAPPatch(boolean);
@@ -1080,50 +1042,78 @@ void Changes(JNIEnv*, jclass, jobject, jint featNum, jstring, jint value, jlong,
         case 127: g_MaxDistance = (float)value; break;
         case 121: enableRainbow = boolean;      break;
         case 122: enableRainbowWall = boolean;  break;
-        case 800: {
-            g_AutoRevive.store(boolean);    g_UnlimitedCoins.store(boolean);
-        } break;
-        case 801: {
-            g_AutoRevive.store(boolean);    g_FastLaneChange.store(boolean);
+
+        // ── Mode buttons ──
+        case 800: { // Simple Mode
+            g_AutoRevive.store(boolean);
             g_UnlimitedCoins.store(boolean);
-            if (boolean) { g_JumpLimit.store(100); g_JumpHeight.store(50);
-                           g_PowerDuration.store(100); g_ScoreMultiplier.store(10); }
-            else { g_JumpLimit.store(0); g_JumpHeight.store(0);
-                   g_PowerDuration.store(0); g_ScoreMultiplier.store(0); }
         } break;
-        case 802: {
-            g_AutoRevive.store(boolean);    g_FastLaneChange.store(boolean);
-            g_UnlimitedCoins.store(boolean); g_NoCollision.store(boolean);
-            if (boolean) g_NoCollisionStartMs.store(nowMs());
-            else g_NoCollisionStartMs.store(0);
-            if (boolean) { g_JumpLimit.store(999); g_JumpHeight.store(200);
-                           g_PowerDuration.store(999); g_ScoreMultiplier.store(999); }
-            else { g_JumpLimit.store(0); g_JumpHeight.store(0);
-                   g_PowerDuration.store(0); g_ScoreMultiplier.store(0); }
+
+        case 801: { // Max Mode
+            g_AutoRevive.store(boolean);
+            g_FastLaneChange.store(boolean);
+            g_UnlimitedCoins.store(boolean);
+            if (boolean) {
+                g_JumpLimit.store(100); g_JumpHeight.store(50);
+                g_PowerDuration.store(100); g_ScoreMultiplier.store(10);
+            } else {
+                g_JumpLimit.store(0); g_JumpHeight.store(0);
+                g_PowerDuration.store(0); g_ScoreMultiplier.store(0);
+            }
         } break;
-        case 803: {
-            g_AutoRevive.store(false);    g_FastLaneChange.store(false);
-            g_UnlimitedCoins.store(false); g_NoCollision.store(false);
-            g_NoCollisionStartMs.store(0); g_JumpLimit.store(0);
-            g_JumpHeight.store(0); g_PowerDuration.store(0);
+
+        case 802: { // Ultra Max Mode
+            g_AutoRevive.store(boolean);
+            g_FastLaneChange.store(boolean);
+            g_UnlimitedCoins.store(boolean);
+            g_NoCollision.store(boolean);   // God Mode ON
+            g_UnlimitedShop.store(boolean); // Free IAP ON
+            applyIsIAPPatch(boolean);
+            if (boolean) {
+                g_JumpLimit.store(999); g_JumpHeight.store(200);
+                g_PowerDuration.store(999); g_ScoreMultiplier.store(999);
+            } else {
+                g_JumpLimit.store(0); g_JumpHeight.store(0);
+                g_PowerDuration.store(0); g_ScoreMultiplier.store(0);
+            }
+        } break;
+
+        case 803: { // Reset All Features
+            g_AutoRevive.store(false);
+            g_FastLaneChange.store(false);
+            g_UnlimitedCoins.store(false);
+            g_NoCollision.store(false);
+            g_JumpLimit.store(0);
+            g_JumpHeight.store(0);
+            g_PowerDuration.store(0);
             g_ScoreMultiplier.store(0);
-            g_NoImpact.store(false);   // reset impact toggle too
-            g_NoGravity.store(false); g_FreezeCharacter.store(false);
-            g_CharacterSpeed.store(0); g_AirJumpHeight.store(0);
-            g_CameraMode.store(0); g_NoBoundaryImpact.store(false);
+            g_NoImpact.store(false);
+            g_NoGravity.store(false);
+            g_FreezeCharacter.store(false);
+            g_CharacterSpeed.store(0);
+            g_AirJumpHeight.store(0);
+            g_CameraMode.store(0);
+            g_NoBoundaryImpact.store(false);
             g_HideJetpack.store(false);
-            g_HidePogostick.store(false); g_HideMagnet.store(false);
-            g_HideHoverboard.store(false); g_StopTrains.store(false);
-            g_AddCoinsBonus.store(0); g_AddKeysBonus.store(0);
-            g_AddScoreBonus.store(0); g_UnlimitedPowerTime.store(false);
-            g_UnlimitedJetpackTime.store(false); g_ReviveReward.store(false);
-            g_FreezeCoins.store(false); g_FreezeScore.store(false);
-            // Also revert the IAP patch if it's currently active
+            g_HidePogostick.store(false);
+            g_HideMagnet.store(false);
+            g_HideHoverboard.store(false);
+            g_StopTrains.store(false);
+            g_AddCoinsBonus.store(0);
+            g_AddKeysBonus.store(0);
+            g_AddScoreBonus.store(0);
+            g_UnlimitedPowerTime.store(false);
+            g_UnlimitedJetpackTime.store(false);
+            g_ReviveReward.store(false);
+            g_FreezeCoins.store(false);
+            g_FreezeScore.store(false);
+            // Revert IAP patch if currently active
             if (g_UnlimitedShop.load()) {
                 g_UnlimitedShop.store(false);
                 applyIsIAPPatch(false);
             }
         } break;
+
         default: break;
     }
 }
