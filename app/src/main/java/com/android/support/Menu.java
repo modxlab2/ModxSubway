@@ -531,8 +531,8 @@ mShimmerViewRef = shimmer;
         int DANGER_BRIGHT = Color.parseColor("#FF3B30");     // iOS-style vivid red
         hideBtn.setBackground(cardBg(
                 withAlpha(DANGER_BRIGHT, 0x1F),              // soft tint bg
-                withAlpha(DANGER_BRIGHT, 0xCC),              // strong border
-                5));                                          // ★ same radius as MINIMIZE
+                withAlpha(DANGER_BRIGHT, 0x99),              // strong border
+                8));                                          // ★ same radius as MINIMIZE
         hideBtn.setText("HIDE/KILL (Hold)");
         hideBtn.setAllCaps(false);
         hideBtn.setTextColor(DANGER_BRIGHT);                  // ★ pure red text (no lighten)
@@ -1661,7 +1661,6 @@ new Titanic().start(proTitle);
 
         private static int iconTypeFor(String name) {
     String n = name == null ? "" : name.toLowerCase();
-
     if (n.contains("setting"))                            return TabIcon.GEAR;
     if (n.contains("player"))                             return TabIcon.USER;
     if (n.contains("power"))                              return TabIcon.BOLT;
@@ -1672,9 +1671,6 @@ new Titanic().start(proTitle);
     if (n.contains("world") || n.contains("home"))        return TabIcon.HOME;
     if (n.contains("chams") || n.contains("visual"))      return TabIcon.PULSE;
     if (n.contains("main"))                               return TabIcon.HOME;
-    if (n.contains("teleport"))                           return TabIcon.LOCATION;
-    if (n.contains("robot"))                              return TabIcon.ROBOT;
-
     return TabIcon.GRID;
 }
 
@@ -3064,7 +3060,7 @@ private void applyMenuColorButtonStyle(Button button, String label, int color) {
             button.setBackground(cardBg(withAlpha(ToggleON, 0x1F), withAlpha(ToggleON, 0xCC), 6));
             button.setText(Html.fromHtml(name + "  <font color='" + hex(ToggleON) + "'><b>ON</b></font>"));
         } else {
-            button.setBackground(cardBg(withAlpha(ToggleOFF, 0x14), withAlpha(ToggleOFF, 0x88), 6));
+            button.setBackground(cardBg(withAlpha(ToggleOFF, 0x14), withAlpha(ToggleOFF, 0xBB), 6));
             button.setText(Html.fromHtml(name + "  <font color='" + hex(ToggleOFF) + "'><b>OFF</b></font>"));
         }
     }
@@ -3844,7 +3840,7 @@ private void updateHeaderColors() {
     if (mMinimizeBtn != null) {
         mMinimizeBtn.setBackground(cardBg(
             withAlpha(COLOR_ACCENT, 0x1A),
-            withAlpha(COLOR_ACCENT, 0x77), 10));
+            withAlpha(COLOR_ACCENT, 0x77), 8));
         mMinimizeBtn.setTextColor(COLOR_ACCENT);
     }
 
@@ -3853,7 +3849,7 @@ private void updateHeaderColors() {
         int DANGER_BRIGHT = Color.parseColor("#FF3B30");
         mHideBtn.setBackground(cardBg(
                 withAlpha(DANGER_BRIGHT, 0x1F),
-                withAlpha(DANGER_BRIGHT, 0xCC), 8));
+                withAlpha(DANGER_BRIGHT, 0x99), 8));
         mHideBtn.setTextColor(DANGER_BRIGHT);
     }
 
