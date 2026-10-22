@@ -1660,24 +1660,23 @@ new Titanic().start(proTitle);
     }
 
         private static int iconTypeFor(String name) {
-        String n = name == null ? "" : name.toLowerCase();
-        if (n.contains("setting"))                                    return TabIcon.GEAR;
-        if (n.contains("performance") || n.contains("perf"))          return TabIcon.PULSE;
-        if (n.contains("diag"))                                       return TabIcon.PULSE;
-        if (n.contains("main") || n.contains("home"))                 return TabIcon.HOME;
-        if (n.contains("esp") || n.contains("visual"))                return TabIcon.EYE;
-        if (n.contains("camera") || n.contains("view"))               return TabIcon.CAMERA;
-        if (n.contains("teleport"))                                   return TabIcon.LOCATION;
-        if (n.contains("robot"))                                      return TabIcon.ROBOT;
-        if (n.contains("aim") || n.contains("weapon") || n.contains("gun")
-                || n.contains("target") || n.contains("combat"))      return TabIcon.TARGET;
-        if (n.contains("fly") || n.contains("flight")
-                || n.contains("move") || n.contains("speed"))         return TabIcon.RUN;
-        if (n.contains("power"))                                      return TabIcon.BOLT;
-        if (n.contains("player") || n.contains("surviv")
-                || n.contains("people"))                              return TabIcon.USER;
-        return TabIcon.GRID;
-    }
+    String n = name == null ? "" : name.toLowerCase();
+
+    if (n.contains("setting"))                            return TabIcon.GEAR;
+    if (n.contains("player"))                             return TabIcon.USER;
+    if (n.contains("power"))                              return TabIcon.BOLT;
+    if (n.contains("score"))                              return TabIcon.TARGET;
+    if (n.contains("safety") || n.contains("guard"))      return TabIcon.EYE;
+    if (n.contains("shop") || n.contains("cart"))         return TabIcon.GRID;
+    if (n.contains("camera"))                             return TabIcon.CAMERA;
+    if (n.contains("world") || n.contains("home"))        return TabIcon.HOME;
+    if (n.contains("chams") || n.contains("visual"))      return TabIcon.PULSE;
+    if (n.contains("main"))                               return TabIcon.HOME;
+    if (n.contains("teleport"))                           return TabIcon.LOCATION;
+    if (n.contains("robot"))                              return TabIcon.ROBOT;
+
+    return TabIcon.GRID;
+}
 
     private static class TabHolder {
         String name;
@@ -3199,65 +3198,69 @@ private void syncToggles(int[] featNums, boolean on) {
     for (int fn : featNums) setToggleState(fn, on);
 }
 
-// Feature numbers:
-// 100 ESP, 101 Box, 102 Line, 103 Health, 104 Distance, 105 EnemyOnly,
-// 109 SilentAim, 111 AutoFire, 116 AimMagnet, 120 FOV,
-// 200 UnlimAmmo, 201 MultiShot, 203 FastReload, 204 MaxRange,
-// 205 BulletSpeed, 207 DualWield, 209 HighDamage, 211 NoRecoil, 232 UnlockDual,
-// 500 FlyPower, 502 FlyWalls, 710 Teleport
-    // ================================================================
-    // Mode → Toggle sync
-    // ----------------------------------------------------------------
-    // Feature numbers (Subway Surfers):
-    //   100 = No Frontal Impact    101 = No Side Impact
-    //   102 = Infinite Jump Limit  103 = High Jump Height
-    //   104 = Auto Revive          105 = Long Power Duration
-    //   106 = Instant Lane Change  107 = Score Multiplier
-    //   108 = No Collision Detect  109 = Free IAP
-    //   110 = Unlimited Coins
-    //
-    // Simple Mode  (800): 100, 101, 104, 110
-    // Max Mode     (801): 100, 101, 102, 103, 104, 105, 106, 107, 110
-    // Ultra Max    (802): 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110
-    // None         (803): সব OFF
-    // ================================================================
-    private void applyModeToMenu(int modeFeatNum, boolean enabled) {
-        switch (modeFeatNum) {
+// ================================================================
+// Mode → Toggle sync
+// ----------------------------------------------------------------
+// Feature numbers (new scheme):
+//   102 = Max Jumps            103 = Jump Height
+//   104 = Auto Revive          106 = Fast Lane
+//   107 = Score Boost          108 = God Mode
+//   110 = Unlimited Coins      130 = Low Gravity
+//   131 = No Wall              132 = No Impact
+//   133 = Freeze Player        134 = Air Jump
+//   135 = Hide Jetpack         136 = Hide Pogo
+//   137 = Hide Magnet          138 = Hide Board
+//   140 = Infinite Powerup     141 = Infinite Jetpack
+//   142 = Freeze Trains        143 = Freeze Coins
+//   144 = Freeze Score         150 = Free IAP
+//   154 = Revive Reward        160 = Player Speed
+//
+// Simple Mode  (800): 104, 110
+// Max Mode     (801): 104, 106, 107, 110
+// Ultra Max    (802): 104, 106, 107, 108, 110, 150
+// Reset        (803): সব OFF
+// ================================================================
+private void applyModeToMenu(int modeFeatNum, boolean enabled) {
+    switch (modeFeatNum) {
 
-            case 800: // Simple Mode
-                if (enabled) {
-                    // Simple ON — শুধু এগুলো ON
-                    syncToggles(new int[]{100, 101, 104, 110}, true);
-                    // বাকি সব forcibly OFF
-                    syncToggles(new int[]{102, 103, 105, 106, 107, 108, 109}, false);
-                } else {
-                    // Simple OFF — শুধু simple mode এর toggle গুলো OFF
-                    syncToggles(new int[]{100, 101, 104, 110}, false);
-                }
-                break;
+        case 800: // Simple Mode
+            if (enabled) {
+                syncToggles(new int[]{104, 110}, true);
+                // Force OFF conflicting advanced toggles
+                syncToggles(new int[]{106, 107, 108, 132, 150}, false);
+            } else {
+                syncToggles(new int[]{104, 110}, false);
+            }
+            break;
 
-            case 801: // Max Mode
-                if (enabled) {
-                    syncToggles(new int[]{100, 101, 102, 103, 104, 105, 106, 107, 110}, true);
-                    syncToggles(new int[]{108, 109}, false);
-                } else {
-                    syncToggles(new int[]{102, 103, 105, 106, 107}, false);
-                }
-                break;
+        case 801: // Max Mode
+            if (enabled) {
+                syncToggles(new int[]{104, 106, 107, 110}, true);
+                // Force OFF others
+                syncToggles(new int[]{108, 132, 150}, false);
+            } else {
+                syncToggles(new int[]{106, 107}, false);
+            }
+            break;
 
-            case 802: // Ultra Max Mode — সব ON
-                if (enabled) {
-                    syncToggles(new int[]{100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110}, true);
-                } else {
-                    syncToggles(new int[]{102, 103, 105, 106, 107, 108, 109}, false);
-                }
-                break;
+        case 802: // Ultra Max Mode — সব ON
+            if (enabled) {
+                syncToggles(new int[]{104, 106, 107, 108, 110, 150}, true);
+                // 150 triggers IAP patch via Preferences → native Changes()
+                syncToggles(new int[]{132}, false);   // No Impact OFF (God Mode covers it)
+            } else {
+                syncToggles(new int[]{106, 107, 108, 150}, false);
+            }
+            break;
 
-            case 803: // None — সব OFF
-                syncToggles(new int[]{100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110}, false);
-                break;
-        }
+        case 803: // Reset All — সব OFF
+            syncToggles(new int[]{
+                    104, 106, 107, 108, 110, 130, 131, 132, 133,
+                    135, 136, 137, 138, 140, 141, 142, 143, 144, 150, 154
+            }, false);
+            break;
     }
+}
          // ================================================================
     // Perfect Inline Dropdown (No PopupWindow, No Bugs)
     // ================================================================
