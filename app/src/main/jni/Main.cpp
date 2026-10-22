@@ -328,19 +328,19 @@ static std::atomic<bool> g_FastLaneChange   {false};
 static std::atomic<int>  g_ScoreMultiplier  {0};
 static std::atomic<bool> g_UnlimitedCoins   {false};
 
-// No Collision (108 God Mode) - uses CharacterController.get_detectCollisions
+// 108 God Mode (Frontal & Side Impact = false)
 static std::atomic<bool> g_NoCollision      {false};
-static std::atomic<bool> g_UnlimitedShop    {false};   // feature 150 Free IAP
-static std::atomic<bool> g_NoImpact         {false};   // feature 132 No Impact
+static std::atomic<bool> g_UnlimitedShop    {false};   // 150 Free IAP
+static std::atomic<bool> g_NoImpact         {false};   // 132 No Impact (NotifySideImpact = false)
+
+// 131 Wall Hack (detectCollisions = false)
+static std::atomic<bool> g_NoWall           {false};   
 
 static std::atomic<bool> g_NoGravity        {false};
 static std::atomic<bool> g_FreezeCharacter  {false};
 static std::atomic<int>  g_CharacterSpeed   {0};
 static std::atomic<int>  g_AirJumpHeight    {0};
 static std::atomic<int>  g_CameraMode       {0};
-
-// No Wall (131) - uses NotifySideImpact + CheckFrontalImpact + CheckSideImpact
-static std::atomic<bool> g_NoBoundaryImpact {false};   
 
 static std::atomic<bool> g_HideJetpack      {false};
 static std::atomic<bool> g_HidePogostick    {false};
@@ -402,8 +402,6 @@ static float (*old_GetDuration)(void*, int)                   = nullptr;
 static float (*old_get_LaneChangeDuration)(void*)             = nullptr;
 static int   (*old_get_BaseMultiplierSum)(void*)              = nullptr;
 static int   (*old_GetCurrency)(void*, int)                   = nullptr;
-
-// RESTORED: get_detectCollisions for God Mode (108)
 static bool  (*old_get_detectCollisions)(void*)               = nullptr;
 
 static void   (*old_ApplyGravity)(void*)                      = nullptr;
@@ -503,30 +501,31 @@ static int new_GetCurrency(void* s, int t) {
     return old_GetCurrency ? old_GetCurrency(s, t) : 0;
 }
 
-// --- GOD MODE (108) ---
+// --- 131 WALL HACK (detectCollisions = false) ---
 static bool new_get_detectCollisions(void* s) {
-    if (g_NoCollision.load()) {
+    if (g_NoWall.load()) {
         return false;
     }
     return old_get_detectCollisions ? old_get_detectCollisions(s) : true;
 }
 
-// --- NO IMPACT & NO WALL (131 & 132) ---
-// Combined CheckFrontalImpact and CheckSideImpact as requested
+// --- 108 GOD MODE (CheckFrontalImpact & CheckSideImpact = false) ---
 static bool new_CheckFrontalImpact(void* s, void* hit) {
-    if (g_NoCollision.load() || g_NoImpact.load() || g_NoBoundaryImpact.load()) {
+    if (g_NoCollision.load()) {
         return false;
     }
     return old_CheckFrontalImpact ? old_CheckFrontalImpact(s, hit) : true;
 }
 static bool new_CheckSideImpact(void* s, void* hit) {
-    if (g_NoCollision.load() || g_NoImpact.load() || g_NoBoundaryImpact.load()) {
+    if (g_NoCollision.load()) {
         return false;
     }
     return old_CheckSideImpact ? old_CheckSideImpact(s, hit) : true;
 }
+
+// --- 132 NO IMPACT (NotifySideImpact = false) ---
 static void new_NotifySideImpact(void* s, int h, void* e, void* ent) {
-    if (g_NoCollision.load() || g_NoImpact.load() || g_NoBoundaryImpact.load()) {
+    if (g_NoImpact.load()) {
         return;
     }
     if (old_NotifySideImpact) old_NotifySideImpact(s, h, e, ent);
@@ -666,7 +665,6 @@ static void installPhase1() {
         }
     }
     {
-        // RESTORED: CharacterController.get_detectCollisions
         auto C = new LoadClass(OBFUSCATE("UnityEngine"), OBFUSCATE("CharacterController"));
         if (C && C->thisclass) {
             DWORD o = C->GetMethodOffsetByName(OBFUSCATE("get_detectCollisions"),0);
@@ -854,15 +852,20 @@ void* hack_thread(void*) {
 jobjectArray GetFeatureList(JNIEnv* env, jobject) {
     jobjectArray ret;
     const char* features[] = {
+        // Main Tab - Mode Buttons with Descriptions
         OBFUSCATE("800_ButtonOnOff_Simple Mode"),
+        OBFUSCATE("804_SmallTextView_ ↳ Auto Revive + Unlimited Coins"),
         OBFUSCATE("801_ButtonOnOff_Max Mode"),
+        OBFUSCATE("805_SmallTextView_ ↳ Simple + Fast Lane, Jump, Score"),
         OBFUSCATE("802_ButtonOnOff_Ultra Max Mode"),
+        OBFUSCATE("806_SmallTextView_ ↳ Max + God Mode, Wall Hack, Gravity"),
         OBFUSCATE("803_ButtonOnOff_Reset All Features"),
 
         OBFUSCATE("Category_Player"),
         OBFUSCATE("102_SeekBar_Max Jumps_0_999"),
         OBFUSCATE("103_SeekBar_Jump Height_0_200"),
         OBFUSCATE("130_Toggle_Low Gravity"),
+        OBFUSCATE("997_Button_Open Camera Tab"),
         OBFUSCATE("133_Toggle_Freeze Player"),
         OBFUSCATE("134_SeekBar_Air Jump_0_200"),
         OBFUSCATE("160_SeekBar_Player Speed_0_200"),
@@ -885,7 +888,8 @@ jobjectArray GetFeatureList(JNIEnv* env, jobject) {
         OBFUSCATE("Category_Safety"),
         OBFUSCATE("108_Toggle_God Mode"),
         OBFUSCATE("132_Toggle_No Impact"),
-        OBFUSCATE("131_Toggle_No Wall"),
+        OBFUSCATE("131_Toggle_Wall Hack"),
+        OBFUSCATE("996_SmallTextView_⚠ Enable Wall Hack before game starts"),
         OBFUSCATE("104_Toggle_Auto Revive"),
 
         OBFUSCATE("Category_Shop"),
@@ -897,7 +901,7 @@ jobjectArray GetFeatureList(JNIEnv* env, jobject) {
         OBFUSCATE("154_Toggle_Revive Reward"),
 
         OBFUSCATE("Category_Camera"),
-        OBFUSCATE("161_Spinner_Camera Mode_Normal,Follow Y,Stop Vertical"),
+        OBFUSCATE("161_Spinner_Camera Mode_Normal,Follow Camera,Stop Follow Camera"),
 
         OBFUSCATE("Category_World"),
         OBFUSCATE("142_Toggle_Freeze Trains"),
@@ -924,11 +928,11 @@ void Changes(JNIEnv*, jclass, jobject, jint featNum, jstring, jint value, jlong,
         case 104: g_AutoRevive.store(boolean);     break;
         case 106: g_FastLaneChange.store(boolean); break;
         case 107: g_ScoreMultiplier.store(value);  break;
-        case 108: g_NoCollision.store(boolean);    break; // God Mode
+        case 108: g_NoCollision.store(boolean);    break; // God Mode (Frontal & Side)
         case 110: g_UnlimitedCoins.store(boolean); break;
         case 130: g_NoGravity.store(boolean);            break;
-        case 131: g_NoBoundaryImpact.store(boolean);     break; // No Wall
-        case 132: g_NoImpact.store(boolean);             break; // No Impact
+        case 131: g_NoWall.store(boolean);               break; // Wall Hack (detectCollisions)
+        case 132: g_NoImpact.store(boolean);             break; // No Impact (NotifySideImpact)
         case 133: g_FreezeCharacter.store(boolean);      break;
         case 134: g_AirJumpHeight.store(value);          break;
         case 135: g_HideJetpack.store(boolean);          break;
@@ -967,6 +971,8 @@ void Changes(JNIEnv*, jclass, jobject, jint featNum, jstring, jint value, jlong,
             g_AutoRevive.store(boolean); g_FastLaneChange.store(boolean);
             g_UnlimitedCoins.store(boolean); g_NoCollision.store(boolean);
             g_UnlimitedShop.store(boolean); applyIsIAPPatch(boolean);
+            g_NoGravity.store(boolean);
+            g_CameraMode.store(boolean ? 1 : 0); // Auto Follow Camera
             if (boolean) { g_JumpLimit.store(999); g_JumpHeight.store(200); g_PowerDuration.store(999); g_ScoreMultiplier.store(999); }
             else { g_JumpLimit.store(0); g_JumpHeight.store(0); g_PowerDuration.store(0); g_ScoreMultiplier.store(0); }
         } break;
@@ -976,7 +982,7 @@ void Changes(JNIEnv*, jclass, jobject, jint featNum, jstring, jint value, jlong,
             g_JumpLimit.store(0); g_JumpHeight.store(0); g_PowerDuration.store(0); g_ScoreMultiplier.store(0);
             g_NoImpact.store(false); g_NoGravity.store(false); g_FreezeCharacter.store(false);
             g_CharacterSpeed.store(0); g_AirJumpHeight.store(0); g_CameraMode.store(0);
-            g_NoBoundaryImpact.store(false); g_HideJetpack.store(false); g_HidePogostick.store(false);
+            g_NoWall.store(false); g_HideJetpack.store(false); g_HidePogostick.store(false);
             g_HideMagnet.store(false); g_HideHoverboard.store(false); g_StopTrains.store(false);
             g_AddCoinsBonus.store(0); g_AddKeysBonus.store(0); g_AddScoreBonus.store(0);
             g_UnlimitedPowerTime.store(false); g_UnlimitedJetpackTime.store(false);
