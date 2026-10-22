@@ -2786,7 +2786,7 @@ Toast.makeText(getContext, "Color: " + cname, Toast.LENGTH_SHORT).show();
                 case "ButtonLink": subFeat++; ButtonLink(linearLayout, strSplit[1], strSplit[2]); break;
                 case "Category": subFeat++; Category(linearLayout, strSplit[1]);  break;
                 case "RichTextView": subFeat++; TextView(linearLayout, strSplit[1]);  break;
-                case "SmallTextView": subFeat++; TextView(linearLayout, strSplit[1], true); break;
+                case "SmallTextView": subFeat++; TextView(linearLayout, featNum, strSplit[1], true); break;
                 case "RichWebView": subFeat++; WebTextView(linearLayout, strSplit[1]); break;
                 case "ColorPicker": subFeat++; ColorPicker(linearLayout, featNum, strSplit[1], strSplit.length > 2 ? strSplit[2] : "#00FF88"); break;
             }
@@ -3303,19 +3303,17 @@ private void applyModeToMenu(int modeFeatNum, boolean enabled) {
         
         tvName.setText(featName + ": " + lists.get(initIdx));
 
-        spinnerRow.setOnClickListener(new View.OnClickListener() {
+                spinnerRow.setOnClickListener(new View.OnClickListener() {
             private PopupWindow activePopup = null;
 
             @Override
             public void onClick(View v) {
-                // ★ FIX: Close previous open dropdown if it's the same one
+                // ★ যদি আগে থেকেই কোনো পপআপ ওপেন থাকে, তবে সেটি ক্লোজ করি
                 if (activeDropdownPopup != null && activeDropdownPopup.isShowing()) {
-                    boolean isThisPopup = (activeDropdownPopup == activePopup);
                     activeDropdownPopup.dismiss();
                     activeDropdownPopup = null;
-                    if (isThisPopup) {
-                        arrowIv.animate().rotation(0f).setDuration(200).start();
-                        return;
+                    if (activeDropdownPopup == activePopup) {
+                        return; // একই পপআপে ক্লিক হলে রিটার্ন করি
                     }
                 }
 
@@ -3331,17 +3329,24 @@ private void applyModeToMenu(int modeFeatNum, boolean enabled) {
                 final PopupWindow popupWindow = new PopupWindow(popupLayout, 
                         spinnerRow.getWidth(), WRAP_CONTENT, true);
                 popupWindow.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
-                // ★ According to Android Docs & StackOverflow: Both must be false for Toggle to work
+                
+                // ★ বাইরে ক্লিক করলে ক্লোজ হবে এবং arrow ঠিকভাবে ঘুরবে
                 popupWindow.setOutsideTouchable(true); 
                 popupWindow.setFocusable(true); 
+                
                 activePopup = popupWindow;
+                activeDropdownPopup = popupWindow;
 
                 arrowIv.animate().rotation(180f).setDuration(200).start();
 
+                // ★ onDismiss এ পপআপ null করে দিই যাতে পরবর্তীতে আর বাগ না হয়
                 popupWindow.setOnDismissListener(new PopupWindow.OnDismissListener() {
                     @Override
                     public void onDismiss() {
                         arrowIv.animate().rotation(0f).setDuration(200).start();
+                        if (activeDropdownPopup == popupWindow) {
+                            activeDropdownPopup = null;
+                        }
                     }
                 });
 
@@ -3699,7 +3704,8 @@ private void applyModeToMenu(int modeFeatNum, boolean enabled) {
     
     
     private void TextView(LinearLayout linLayout, String text) {
-    TextView(linLayout, text, false);
+    // এখানে featNum হিসেবে -1 পাস করা হলো, কারণ এটি সাধারণ টেক্সট
+    TextView(linLayout, -1, text, false);
 }
 
 private void TextView(LinearLayout linLayout, int featNum, String text, boolean small) {
