@@ -2018,7 +2018,7 @@ new Titanic().start(proTitle);
                     case "Collapse": Collapse(targetLayout, featName, switchedOn); break;
                     case "ButtonLink": ButtonLink(targetLayout, featName, strSplit[2]); break;
                     case "RichTextView": TextView(targetLayout, featName); break;
-                    case "SmallTextView": TextView(targetLayout, featName, true); break;
+                    case "SmallTextView": TextView(targetLayout, featNum, featName, true); break;
                     case "RichWebView": WebTextView(targetLayout, featName); break;
                     case "ColorPicker": ColorPicker(targetLayout, featNum, featName, strSplit.length > 2 ? strSplit[2] : "#00FF88"); break;
                     case "TeleportPadWidget": TeleportPad(targetLayout); break;
@@ -3332,8 +3332,8 @@ private void applyModeToMenu(int modeFeatNum, boolean enabled) {
                         spinnerRow.getWidth(), WRAP_CONTENT, true);
                 popupWindow.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
                 // ★ According to Android Docs & StackOverflow: Both must be false for Toggle to work
-                popupWindow.setOutsideTouchable(false); 
-                popupWindow.setFocusable(false); 
+                popupWindow.setOutsideTouchable(true); 
+                popupWindow.setFocusable(true); 
                 activePopup = popupWindow;
 
                 arrowIv.animate().rotation(180f).setDuration(200).start();
@@ -3702,13 +3702,23 @@ private void applyModeToMenu(int modeFeatNum, boolean enabled) {
     TextView(linLayout, text, false);
 }
 
-private void TextView(LinearLayout linLayout, String text, boolean small) {
+private void TextView(LinearLayout linLayout, int featNum, String text, boolean small) {
     TextView textView = new TextView(getContext);
     textView.setText(Html.fromHtml(text));
     textView.setTextColor(Color.parseColor("#C6C8D0"));
     textView.setTypeface(fontRegular);
-    textView.setTextSize(small ? 10f : 12f);   // ← SmallTextView হলে ছোট
+    textView.setTextSize(small ? 10f : 12f);
     textView.setPadding(dp(12), dp(5), dp(12), dp(5));
+
+    // ★ Camera Tab Auto Open on clicking "Click here"
+    if (featNum == 993) {
+        textView.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                selectTabByName("Camera");
+            }
+        });
+    }
     linLayout.addView(textView);
 }
 
