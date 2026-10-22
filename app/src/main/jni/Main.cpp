@@ -883,14 +883,11 @@ jobjectArray GetFeatureList(JNIEnv* env, jobject) {
         OBFUSCATE("Category_World"),
         OBFUSCATE("142_Toggle_Freeze Trains"),
 
-                OBFUSCATE("Category_Chams"),
+                        OBFUSCATE("Category_Chams"),
         OBFUSCATE("119_Toggle_Enable Chams"),
-        OBFUSCATE("120_Spinner_Chams Mode_Off,X-Ray,Solid,Professional"),
-        OBFUSCATE("125_Spinner_Color Preset_Green Blue,Neon Red,Cyan Pink"),
         OBFUSCATE("126_Spinner_Shader Target_Trains Only,All Objects"),
-        OBFUSCATE("127_SeekBar_Max Distance_10_50"), // দূরত্ব ১০ থেকে ৫০ করা হয়েছে
+        OBFUSCATE("125_Spinner_Color Preset_Green Blue,Neon Red,Cyan Pink"),
         OBFUSCATE("121_Toggle_Rainbow Visible"),
-        OBFUSCATE("122_Toggle_Rainbow Wall"),
     };
     int n = (int)(sizeof(features)/sizeof(features[0]));
     ret = (jobjectArray) env->NewObjectArray(n, env->FindClass(OBFUSCATE("java/lang/String")), env->NewStringUTF(""));
@@ -930,12 +927,9 @@ void Changes(JNIEnv*, jclass, jobject, jint featNum, jstring, jint value, jlong,
         case 160: g_CharacterSpeed.store(value);         break;
         case 161: g_CameraMode.store(value);             break;
         case 119: g_ChamsEnabled = boolean;     break;
-        case 120: chamsint = value;             break;
         case 125: setColorPreset(value);        break;
         case 126: setShaderPreset(value);       break;
-        case 127: g_MaxDistance = (float)value; break;
         case 121: enableRainbow = boolean;      break;
-        case 122: enableRainbowWall = boolean;  break;
         case 800: {
             g_AutoRevive.store(boolean); g_UnlimitedCoins.store(boolean);
         } break;

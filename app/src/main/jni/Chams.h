@@ -43,10 +43,8 @@ struct Vec4 {
 static void *handle = nullptr;
 std::vector<std::string> shaders;
 
-int chamsint = 3; // Default: Professional (Hybrid)
 bool g_ChamsEnabled = false;
-std::string mineShader = "_Displacement"; 
-float g_MaxDistance = 20.0f; // ডিফল্ট দূরত্ব ২০
+std::string mineShader = "_Displacement"; // Default: Trains Only
 
 // ================================================================
 //  Color Presets
@@ -59,7 +57,7 @@ static const ColorPreset kColorPresets[] = {
 };
 static const int kColorPresetCount = sizeof(kColorPresets) / sizeof(kColorPresets[0]);
 
-bool enableRainbow = false, enableRainbowWall = false;
+bool enableRainbow = false;
 Vec4 visibleColor = Vec4(0.0f, 0.5f, 0.0f, 1.0f);
 Vec4 inWallColor  = Vec4(0.3f, 0.8f, 1.0f, 1.0f);
 
@@ -70,7 +68,6 @@ struct ShaderPreset { const char* name; const char* shader; };
 static const ShaderPreset kShaderPresets[] = {
     { "Trains Only (_Displacement)", "_Displacement" },
     { "All Objects (_MainTex)",      "_MainTex" },
-    { "Color (_Color)",              "_Color" },
 };
 static const int kShaderPresetCount = sizeof(kShaderPresets) / sizeof(kShaderPresets[0]);
 
@@ -78,7 +75,7 @@ void setColorPreset(int idx) {
     if (idx >= 0 && idx < kColorPresetCount) {
         visibleColor = kColorPresets[idx].visible;
         inWallColor  = kColorPresets[idx].inWall;
-        enableRainbow = enableRainbowWall = false;
+        enableRainbow = false;
     }
 }
 void setShaderPreset(int idx) {
@@ -117,9 +114,8 @@ int new_glGetUniformLocation(unsigned int program, const char *name) {
 void (*old_glDrawElements)(unsigned int, int, unsigned int, const void *) = nullptr;
 void new_glDrawElements(unsigned int mode, int count, unsigned int type, const void *indices) {
 
-    // minCount কমানো হয়েছে যাতে ট্রেনের ছোট ছোট বগি বা মাঝের অংশগুলো বাদ না পড়ে
-    int minCount = 100; 
-    if (mode != GL_TRIANGLES || count < minCount) {
+    // minCount 100 করা হয়েছে যাতে ট্রেনের ছোট অংশ বাদ না পড়ে
+    if (mode != GL_TRIANGLES || count < 100) {
         return old_glDrawElements(mode, count, type, indices);
     }
 
@@ -127,112 +123,48 @@ void new_glDrawElements(unsigned int mode, int count, unsigned int type, const v
     p_glGetBooleanv(GL_BLEND, &blend);
     if (blend) return old_glDrawElements(mode, count, type, indices);
 
-    unsigned char depthTest = 0;
-    p_glGetBooleanv(GL_DEPTH_TEST, &depthTest);
-    
-    // X-Ray (chamsint == 2) এর সময় depthTest ফেইল করলেও যেন রেন্ডার হয়
-    if (!depthTest && chamsint != 2) return old_glDrawElements(mode, count, type, indices);
+    if (!g_ChamsEnabled) {
+        return old_glDrawElements(mode, count, type, indices);
+    }
 
     int currProgram = 0;
     p_glGetIntegerv(GL_CURRENT_PROGRAM, &currProgram);
     
-    // Fallback Logic: যদি _Displacement না থাকে, তবে _MainTex বা _Color চেক করবে
+    // Strict Shader Check (কোনো Fallback নেই, তাই Trains Only ঠিকমতো কাজ করবে)
     int shader = old_glGetUniformLocation(currProgram, mineShader.c_str());
-    if (shader == -1 && mineShader == "_Displacement") {
-        shader = old_glGetUniformLocation(currProgram, "_MainTex");
-        if (shader == -1) {
-            shader = old_glGetUniformLocation(currProgram, "_Color");
-        }
-    }
-    
-    if (shader == -1 || !g_ChamsEnabled || chamsint == 0) {
+    if (shader == -1) {
         return old_glDrawElements(mode, count, type, indices);
-    }
-
-    // ★ Distance Check (যাতে অনেক দূরের ট্রেন হাইলাইট না হয়)
-    if (g_MaxDistance > 0.0f) {
-        int objLoc = old_glGetUniformLocation(currProgram, "hlslcc_mtx4x4unity_ObjectToWorld[3]");
-        int camLoc = old_glGetUniformLocation(currProgram, "_WorldSpaceCameraPos");
-        
-        if (objLoc != -1 && camLoc != -1) {
-            float objVec[4];
-            float cam[3];
-            p_glGetUniformfv(currProgram, objLoc, objVec);
-            p_glGetUniformfv(currProgram, camLoc, cam);
-
-            float dx = objVec[0] - cam[0];
-            float dz = objVec[2] - cam[2];
-            float dist = sqrt(dx*dx + dz*dz);
-
-            if (dist > g_MaxDistance) {
-                return old_glDrawElements(mode, count, type, indices);
-            }
-        }
     }
 
     if (enableRainbow) {
         visibleColor.x = redd / 255.0f; visibleColor.y = greenn / 255.0f; visibleColor.z = bluee / 255.0f;
-    }
-    if (enableRainbowWall) {
         inWallColor.x = redd / 255.0f; inWallColor.y = greenn / 255.0f; inWallColor.z = bluee / 255.0f;
     }
     performRGBChange();
 
-    // Draw original game object
+    // Draw original game object first
     old_glDrawElements(mode, count, type, indices);
 
+    // ============================================================
+    // Professional Chams Mode (Only Mode)
+    // ============================================================
     p_glEnable(GL_BLEND);
     p_glBlendFunc(GL_ONE, GL_CONSTANT_COLOR); 
+    p_glEnable(GL_DEPTH_TEST);
+    p_glDepthFunc(GL_LEQUAL); 
+    p_glDepthMask(GL_FALSE); 
+    
+    // 1. Draw inner walls (Sky Blue / InWall Color)
+    p_glCullFace(GL_FRONT); 
+    p_glBlendColor(inWallColor.x, inWallColor.y, inWallColor.z, 1.0f);
+    old_glDrawElements(mode, count, type, indices);
 
-    // ============================================================
-    // Mode 1: Solid (দেয়ালের ওপার থেকে দেখা যাবে না, শুধু সামনে থাকলে দেখা যাবে)
-    // ============================================================
-    if (chamsint == 1) {
-        p_glEnable(GL_DEPTH_TEST);
-        p_glDepthFunc(GL_LEQUAL);
-        p_glDepthMask(GL_FALSE); // ডেপথ বাফার নষ্ট হবে না
-        
-        p_glBlendColor(visibleColor.x, visibleColor.y, visibleColor.z, 1.0f);
-        old_glDrawElements(mode, count, type, indices);
-        
-        p_glDepthMask(GL_TRUE);
-    }
-    // ============================================================
-    // Mode 2: X-Ray (দেয়ালের ভেতর/ওপার থেকেও দেখা যাবে)
-    // ============================================================
-    else if (chamsint == 2) {
-        p_glDepthMask(GL_FALSE); 
-        p_glDisable(GL_DEPTH_TEST);
-        p_glDisable(GL_CULL_FACE);
-        
-        p_glBlendColor(visibleColor.x, visibleColor.y, visibleColor.z, 1.0f);
-        old_glDrawElements(mode, count, type, indices);
-        
-        p_glEnable(GL_DEPTH_TEST);
-        p_glEnable(GL_CULL_FACE);
-        p_glDepthMask(GL_TRUE);
-    }
-    // ============================================================
-    // Mode 3: Professional (ভেতর ও বাহিরের রঙ আলাদা, ডেপথ ঠিক থাকে)
-    // ============================================================
-    else if (chamsint == 3) {
-        p_glEnable(GL_DEPTH_TEST);
-        p_glDepthFunc(GL_LEQUAL); 
-        p_glDepthMask(GL_FALSE); 
-        
-        // 1. Draw inner walls (Sky Blue)
-        p_glCullFace(GL_FRONT); 
-        p_glBlendColor(inWallColor.x, inWallColor.y, inWallColor.z, 1.0f);
-        old_glDrawElements(mode, count, type, indices);
-
-        // 2. Draw outer walls (Dark Green)
-        p_glCullFace(GL_BACK); 
-        p_glBlendColor(visibleColor.x, visibleColor.y, visibleColor.z, 1.0f);
-        old_glDrawElements(mode, count, type, indices);
-        
-        p_glDepthMask(GL_TRUE);
-    }
-
+    // 2. Draw outer walls (Dark Green / Visible Color)
+    p_glCullFace(GL_BACK); 
+    p_glBlendColor(visibleColor.x, visibleColor.y, visibleColor.z, 1.0f);
+    old_glDrawElements(mode, count, type, indices);
+    
+    p_glDepthMask(GL_TRUE);
     p_glDisable(GL_BLEND);
     p_glBlendColor(0, 0, 0, 1);
 }
