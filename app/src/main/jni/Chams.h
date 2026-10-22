@@ -43,10 +43,10 @@ struct Vec4 {
 static void *handle = nullptr;
 std::vector<std::string> shaders;
 
-int chamsint = 3; // Default: Hybrid (Professional)
+int chamsint = 3; // Default: Professional (Hybrid)
 bool g_ChamsEnabled = false;
 std::string mineShader = "_Displacement"; 
-float g_MaxDistance = 20.0f; // ডিফল্ট দূরত্ব কমিয়ে ২০ করা হয়েছে
+float g_MaxDistance = 20.0f; // ডিফল্ট দূরত্ব ২০
 
 // ================================================================
 //  Color Presets
@@ -117,7 +117,8 @@ int new_glGetUniformLocation(unsigned int program, const char *name) {
 void (*old_glDrawElements)(unsigned int, int, unsigned int, const void *) = nullptr;
 void new_glDrawElements(unsigned int mode, int count, unsigned int type, const void *indices) {
 
-    int minCount = (mineShader == "_Displacement") ? 1500 : 3000;
+    // minCount কমানো হয়েছে যাতে ট্রেনের ছোট ছোট বগি বা মাঝের অংশগুলো বাদ না পড়ে
+    int minCount = 100; 
     if (mode != GL_TRIANGLES || count < minCount) {
         return old_glDrawElements(mode, count, type, indices);
     }
@@ -128,17 +129,27 @@ void new_glDrawElements(unsigned int mode, int count, unsigned int type, const v
 
     unsigned char depthTest = 0;
     p_glGetBooleanv(GL_DEPTH_TEST, &depthTest);
-    if (!depthTest) return old_glDrawElements(mode, count, type, indices);
+    
+    // X-Ray (chamsint == 2) এর সময় depthTest ফেইল করলেও যেন রেন্ডার হয়
+    if (!depthTest && chamsint != 2) return old_glDrawElements(mode, count, type, indices);
 
     int currProgram = 0;
     p_glGetIntegerv(GL_CURRENT_PROGRAM, &currProgram);
+    
+    // Fallback Logic: যদি _Displacement না থাকে, তবে _MainTex বা _Color চেক করবে
     int shader = old_glGetUniformLocation(currProgram, mineShader.c_str());
+    if (shader == -1 && mineShader == "_Displacement") {
+        shader = old_glGetUniformLocation(currProgram, "_MainTex");
+        if (shader == -1) {
+            shader = old_glGetUniformLocation(currProgram, "_Color");
+        }
+    }
     
     if (shader == -1 || !g_ChamsEnabled || chamsint == 0) {
         return old_glDrawElements(mode, count, type, indices);
     }
 
-    // ★ Distance & Front Check Filter (Fixed & Optimized)
+    // ★ Distance Check (যাতে অনেক দূরের ট্রেন হাইলাইট না হয়)
     if (g_MaxDistance > 0.0f) {
         int objLoc = old_glGetUniformLocation(currProgram, "hlslcc_mtx4x4unity_ObjectToWorld[3]");
         int camLoc = old_glGetUniformLocation(currProgram, "_WorldSpaceCameraPos");
@@ -149,18 +160,11 @@ void new_glDrawElements(unsigned int mode, int count, unsigned int type, const v
             p_glGetUniformfv(currProgram, objLoc, objVec);
             p_glGetUniformfv(currProgram, camLoc, cam);
 
-            // 3D Distance Calculation
             float dx = objVec[0] - cam[0];
-            float dy = objVec[1] - cam[1];
             float dz = objVec[2] - cam[2];
-            float dist = sqrt(dx*dx + dy*dy + dz*dz);
+            float dist = sqrt(dx*dx + dz*dz);
 
-            // Ignore objects that are behind the player (assuming +Z is forward)
-            // Note: In Subway Surfers, usually the character moves towards +Z or -Z. 
-            // The camera is behind the player. If the train is behind the player, Z difference will be negative.
-            bool isBehind = (dz < -5.0f); // Simple heuristic
-
-            if (dist > g_MaxDistance || isBehind) {
+            if (dist > g_MaxDistance) {
                 return old_glDrawElements(mode, count, type, indices);
             }
         }
@@ -180,34 +184,52 @@ void new_glDrawElements(unsigned int mode, int count, unsigned int type, const v
     p_glEnable(GL_BLEND);
     p_glBlendFunc(GL_ONE, GL_CONSTANT_COLOR); 
 
-    // Mode 1: Solid Visible (No wall bleed)
+    // ============================================================
+    // Mode 1: Solid (দেয়ালের ওপার থেকে দেখা যাবে না, শুধু সামনে থাকলে দেখা যাবে)
+    // ============================================================
     if (chamsint == 1) {
-        p_glDepthMask(GL_FALSE); 
+        p_glEnable(GL_DEPTH_TEST);
+        p_glDepthFunc(GL_LEQUAL);
+        p_glDepthMask(GL_FALSE); // ডেপথ বাফার নষ্ট হবে না
+        
         p_glBlendColor(visibleColor.x, visibleColor.y, visibleColor.z, 1.0f);
         old_glDrawElements(mode, count, type, indices);
+        
         p_glDepthMask(GL_TRUE);
     }
-    // Mode 2: X-Ray (Through walls)
+    // ============================================================
+    // Mode 2: X-Ray (দেয়ালের ভেতর/ওপার থেকেও দেখা যাবে)
+    // ============================================================
     else if (chamsint == 2) {
         p_glDepthMask(GL_FALSE); 
         p_glDisable(GL_DEPTH_TEST);
         p_glDisable(GL_CULL_FACE);
+        
         p_glBlendColor(visibleColor.x, visibleColor.y, visibleColor.z, 1.0f);
         old_glDrawElements(mode, count, type, indices);
+        
         p_glEnable(GL_DEPTH_TEST);
         p_glEnable(GL_CULL_FACE);
         p_glDepthMask(GL_TRUE);
     }
-    // Mode 3: Professional (Respects Depth - No wall bleed)
+    // ============================================================
+    // Mode 3: Professional (ভেতর ও বাহিরের রঙ আলাদা, ডেপথ ঠিক থাকে)
+    // ============================================================
     else if (chamsint == 3) {
         p_glEnable(GL_DEPTH_TEST);
         p_glDepthFunc(GL_LEQUAL); 
-        p_glDepthMask(GL_FALSE); // Don't write to depth buffer so we don't mess up the game's rendering
+        p_glDepthMask(GL_FALSE); 
         
-        // Draw a clean solid color overlay on the visible parts of the train
-        p_glBlendColor(visibleColor.x, visibleColor.y, visibleColor.z, 1.0f);
+        // 1. Draw inner walls (Sky Blue)
+        p_glCullFace(GL_FRONT); 
+        p_glBlendColor(inWallColor.x, inWallColor.y, inWallColor.z, 1.0f);
         old_glDrawElements(mode, count, type, indices);
 
+        // 2. Draw outer walls (Dark Green)
+        p_glCullFace(GL_BACK); 
+        p_glBlendColor(visibleColor.x, visibleColor.y, visibleColor.z, 1.0f);
+        old_glDrawElements(mode, count, type, indices);
+        
         p_glDepthMask(GL_TRUE);
     }
 
