@@ -688,7 +688,7 @@ mExpanded.addView(shimmer);
 
 // ★ Native Init "Waiting for game lib..." সেট করতে পারে → সাথে সাথে override
 title.setText("ModX Lab");
-subTitle.setText("Created by ModX Lab");
+subTitle.setText("Subway Surf V3.70.2");
 
 // ★ Periodically re-check — Init async হলে তখনও override হবে
 final TextView fSub = subTitle;
@@ -700,7 +700,7 @@ subGuard.postDelayed(new Runnable() {
         try {
             CharSequence s = fSub.getText();
             if (s != null && s.toString().contains("Waiting")) {
-                fSub.setText("Created by ModX Lab");
+                fSub.setText("Subway Surf V3.70.2");
             }
         } catch (Exception ignored) { }
         subGuard.postDelayed(this, 1000);
