@@ -2152,11 +2152,7 @@ if (!categoryNames.contains("Settings")) {
 
     private void selectTab(TabHolder selected) {
         // ★ FIX: Close any open dropdown to prevent it from overlaying the new tab
-        if (activeDropdownPopup != null && activeDropdownPopup.isShowing()) {
-            activeDropdownPopup.dismiss();
-            activeDropdownPopup = null;
-        }
-
+        
         for (TabHolder t : tabHolders) styleTab(t, t == selected);
 
         contentLayout.removeAllViews();
@@ -3273,122 +3269,97 @@ private void applyModeToMenu(int modeFeatNum, boolean enabled) {
     // Perfect Inline Dropdown (No PopupWindow, No Bugs)
     // ================================================================
             private void Spinner(LinearLayout linLayout, final int featNum, final String featName, final String list) {
-        final Context ctx = getContext;
-        final List<String> lists = new LinkedList<String>(Arrays.asList(list.split(",")));
+    final Context ctx = getContext;
+    final List<String> lists = new LinkedList<String>(Arrays.asList(list.split(",")));
 
-        final LinearLayout spinnerRow = new LinearLayout(ctx);
-        spinnerRow.setLayoutParams(rowLp(6, 3, 6, 3));
-        spinnerRow.setBackground(cardBg(COLOR_CARD, COLOR_CARD_BORDER, 6));
-        spinnerRow.setGravity(Gravity.CENTER_VERTICAL);
-        spinnerRow.setPadding(dp(12), dp(11), dp(12), dp(11));
-        spinnerRow.setOrientation(LinearLayout.HORIZONTAL);
+    // ১. মেইন কন্টেইনার (যা spinner row এবং dropdown list দুটোই ধরে রাখবে)
+    final LinearLayout container = new LinearLayout(ctx);
+    container.setOrientation(LinearLayout.VERTICAL);
+    container.setLayoutParams(rowLp(6, 3, 6, 3));
 
-        final TextView tvName = new TextView(ctx);
-        tvName.setTextColor(TEXT_COLOR_2);
-        tvName.setTypeface(fontMedium);
-        tvName.setTextSize(12f * currentScale);
-        tvName.setLayoutParams(new LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f));
+    // ২. Spinner Row (যেটি সবসময় দেখা যাবে)
+    final LinearLayout spinnerRow = new LinearLayout(ctx);
+    spinnerRow.setBackground(cardBg(COLOR_CARD, COLOR_CARD_BORDER, 6));
+    spinnerRow.setGravity(Gravity.CENTER_VERTICAL);
+    spinnerRow.setPadding(dp(12), dp(11), dp(12), dp(11));
+    spinnerRow.setOrientation(LinearLayout.HORIZONTAL);
 
-        final ImageView arrowIv = new ImageView(ctx);
-        TabIcon chevIcon = new TabIcon(TabIcon.CHEVRON);
-        chevIcon.setColor(COLOR_ACCENT);
-        arrowIv.setImageDrawable(chevIcon);
-        arrowIv.setLayoutParams(new LinearLayout.LayoutParams(dp(18), dp(18)));
+    final TextView tvName = new TextView(ctx);
+    tvName.setTextColor(TEXT_COLOR_2);
+    tvName.setTypeface(fontMedium);
+    tvName.setTextSize(12f * currentScale);
+    tvName.setLayoutParams(new LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f));
 
-        spinnerRow.addView(tvName);
-        spinnerRow.addView(arrowIv);
+    final ImageView arrowIv = new ImageView(ctx);
+    TabIcon chevIcon = new TabIcon(TabIcon.CHEVRON);
+    chevIcon.setColor(COLOR_ACCENT);
+    arrowIv.setImageDrawable(chevIcon);
+    arrowIv.setLayoutParams(new LinearLayout.LayoutParams(dp(18), dp(18)));
 
-        final int savedIdx = Preferences.loadPrefInt(featName, featNum);
-        final int initIdx = (savedIdx >= 0 && savedIdx < lists.size()) ? savedIdx : 0;
+    spinnerRow.addView(tvName);
+    spinnerRow.addView(arrowIv);
+
+    final int savedIdx = Preferences.loadPrefInt(featName, featNum);
+    final int initIdx = (savedIdx >= 0 && savedIdx < lists.size()) ? savedIdx : 0;
+    tvName.setText(featName + ": " + lists.get(initIdx));
+
+    // ৩. Dropdown List (যা ক্লিক করলে ওপেন হবে)
+    final LinearLayout dropdownList = new LinearLayout(ctx);
+    dropdownList.setOrientation(LinearLayout.VERTICAL);
+    dropdownList.setVisibility(View.GONE);
+    dropdownList.setBackground(cardBg(COLOR_BG_TOP, withAlpha(COLOR_ACCENT, 0xAA), 8));
+    dropdownList.setPadding(dp(4), dp(4), dp(4), dp(4));
+    
+    LinearLayout.LayoutParams listLp = new LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT);
+    listLp.setMargins(0, dp(4), 0, 0);
+    dropdownList.setLayoutParams(listLp);
+
+    for (int i = 0; i < lists.size(); i++) {
+        final int index = i;
+        TextView tv = new TextView(ctx);
+        tv.setText(lists.get(i));
+        tv.setTextColor(TEXT_COLOR_2);
+        tv.setTypeface(fontMedium);
+        tv.setTextSize(12f * currentScale);
+        tv.setPadding(dp(12), dp(12), dp(12), dp(12));
         
-        tvName.setText(featName + ": " + lists.get(initIdx));
+        if (index == initIdx) {
+            tv.setTextColor(COLOR_ACCENT);
+            tv.setBackground(cardBg(withAlpha(COLOR_ACCENT, 0x1A), 0, 4));
+        }
 
-                spinnerRow.setOnClickListener(new View.OnClickListener() {
-            private PopupWindow activePopup = null;
-
+        tv.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                // ★ যদি আগে থেকেই কোনো পপআপ ওপেন থাকে, তবে সেটি ক্লোজ করি
-                if (activeDropdownPopup != null && activeDropdownPopup.isShowing()) {
-                    activeDropdownPopup.dismiss();
-                    activeDropdownPopup = null;
-                    if (activeDropdownPopup == activePopup) {
-                        return; // একই পপআপে ক্লিক হলে রিটার্ন করি
-                    }
-                }
-
-                LinearLayout popupLayout = new LinearLayout(ctx);
-                popupLayout.setOrientation(LinearLayout.VERTICAL);
-                popupLayout.setBackground(cardBg(COLOR_BG_TOP, withAlpha(COLOR_ACCENT, 0xAA), 8));
-                popupLayout.setPadding(dp(4), dp(4), dp(4), dp(4));
-
-                ScrollView scrollView = new ScrollView(ctx);
-                LinearLayout listLayout = new LinearLayout(ctx);
-                listLayout.setOrientation(LinearLayout.VERTICAL);
-
-                final PopupWindow popupWindow = new PopupWindow(popupLayout, 
-                        spinnerRow.getWidth(), WRAP_CONTENT, true);
-                popupWindow.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
-                
-                // ★ বাইরে ক্লিক করলে ক্লোজ হবে এবং arrow ঠিকভাবে ঘুরবে
-                popupWindow.setOutsideTouchable(true); 
-                popupWindow.setFocusable(true); 
-                
-                activePopup = popupWindow;
-                activeDropdownPopup = popupWindow;
-
-                arrowIv.animate().rotation(180f).setDuration(200).start();
-
-                // ★ onDismiss এ পপআপ null করে দিই যাতে পরবর্তীতে আর বাগ না হয়
-                popupWindow.setOnDismissListener(new PopupWindow.OnDismissListener() {
-                    @Override
-                    public void onDismiss() {
-                        arrowIv.animate().rotation(0f).setDuration(200).start();
-                        if (activeDropdownPopup == popupWindow) {
-                            activeDropdownPopup = null;
-                        }
-                    }
-                });
-
-                for (int i = 0; i < lists.size(); i++) {
-                    final int index = i;
-                    TextView tv = new TextView(ctx);
-                    tv.setText(lists.get(i));
-                    tv.setTextColor(TEXT_COLOR_2);
-                    tv.setTypeface(fontMedium);
-                    tv.setTextSize(12f * currentScale);
-                    tv.setPadding(dp(12), dp(12), dp(12), dp(12));
-                    
-                    if (index == initIdx) {
-                        tv.setTextColor(COLOR_ACCENT);
-                        tv.setBackground(cardBg(withAlpha(COLOR_ACCENT, 0x1A), 0, 4));
-                    }
-
-                    tv.setOnClickListener(new View.OnClickListener() {
-                        @Override
-                        public void onClick(View v) {
-                            tvName.setText(featName + ": " + lists.get(index));
-                            Preferences.changeFeatureInt(featName, featNum, index);
-                            popupWindow.dismiss();
-                        }
-                    });
-                    listLayout.addView(tv);
-                }
-
-                scrollView.addView(listLayout);
-                if (lists.size() > 5) {
-                    popupLayout.addView(scrollView, new LinearLayout.LayoutParams(MATCH_PARENT, dp(200)));
-                } else {
-                    popupLayout.addView(scrollView, new LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT));
-                }
-
-                popupWindow.showAsDropDown(spinnerRow, 0, 0);
+                tvName.setText(featName + ": " + lists.get(index));
+                Preferences.changeFeatureInt(featName, featNum, index);
+                dropdownList.setVisibility(View.GONE);
+                arrowIv.animate().rotation(0f).setDuration(200).start();
             }
         });
-
-        linLayout.addView(spinnerRow);
+        dropdownList.addView(tv);
     }
-    
+
+    // ৪. Spinner Row-তে ক্লিক করলে Toggle হবে
+    spinnerRow.setOnClickListener(new View.OnClickListener() {
+        @Override
+        public void onClick(View v) {
+            if (dropdownList.getVisibility() == View.VISIBLE) {
+                dropdownList.setVisibility(View.GONE);
+                arrowIv.animate().rotation(0f).setDuration(200).start();
+            } else {
+                dropdownList.setVisibility(View.VISIBLE);
+                arrowIv.animate().rotation(180f).setDuration(200).start();
+            }
+        }
+    });
+
+    container.addView(spinnerRow);
+    container.addView(dropdownList);
+    linLayout.addView(container);
+}
+
+        
     
     
     
