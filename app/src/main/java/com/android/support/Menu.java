@@ -247,7 +247,7 @@ private final HashMap<Integer, ToggleHolder> mToggles =
     private int savedWindowFlags = 0;
 private boolean windowIsFocusable = false;
 private boolean isLoggedIn = false;
-
+private PopupWindow activeDropdownPopup = null;
 private View sidebarDivider = null;
 private int effectivePosY = POS_Y;
     private static final HashMap<Integer, Integer> SEEK_DEFAULTS = new HashMap<Integer, Integer>();
@@ -532,7 +532,7 @@ mShimmerViewRef = shimmer;
         hideBtn.setBackground(cardBg(
                 withAlpha(DANGER_BRIGHT, 0x1F),              // soft tint bg
                 withAlpha(DANGER_BRIGHT, 0x99),              // strong border
-                8));                                          // ★ same radius as MINIMIZE
+                6));                                          // ★ same radius as MINIMIZE
         hideBtn.setText("HIDE/KILL (Hold)");
         hideBtn.setAllCaps(false);
         hideBtn.setTextColor(DANGER_BRIGHT);                  // ★ pure red text (no lighten)
@@ -566,7 +566,7 @@ mShimmerViewRef = shimmer;
 
         Button closeBtn = new Button(context);
         closeBtn.setLayoutParams(new LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT));
-        closeBtn.setBackground(cardBg(withAlpha(COLOR_ACCENT, 0x1A), withAlpha(COLOR_ACCENT, 0x77), 5));
+        closeBtn.setBackground(cardBg(withAlpha(COLOR_ACCENT, 0x1A), withAlpha(COLOR_ACCENT, 0x77), 6));
         closeBtn.setText("MINIMIZE");
         closeBtn.setAllCaps(false);
         closeBtn.setTextColor(COLOR_ACCENT);
@@ -2151,6 +2151,12 @@ if (!categoryNames.contains("Settings")) {
     }
 
     private void selectTab(TabHolder selected) {
+        // ★ FIX: Close any open dropdown to prevent it from overlaying the new tab
+        if (activeDropdownPopup != null && activeDropdownPopup.isShowing()) {
+            activeDropdownPopup.dismiss();
+            activeDropdownPopup = null;
+        }
+
         for (TabHolder t : tabHolders) styleTab(t, t == selected);
 
         contentLayout.removeAllViews();
@@ -2972,6 +2978,12 @@ chip.setText(String.valueOf(val));
         button.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
+         
+                // ★ Camera Tab Auto Open
+                if (featNum == 997) {
+                    selectTabByName("Camera");
+                    return;
+                }
                 switch (featNum) {
                     case -6:
                         if (categoryNames.size() > 0 && selectTabByName(categoryNames.get(0))) {
@@ -3296,11 +3308,15 @@ private void applyModeToMenu(int modeFeatNum, boolean enabled) {
 
             @Override
             public void onClick(View v) {
-                // ★ Toggle Close: If open, close it
-                if (activePopup != null && activePopup.isShowing()) {
-                    activePopup.dismiss();
-                    arrowIv.animate().rotation(0f).setDuration(200).start();
-                    return;
+                // ★ FIX: Close previous open dropdown if it's the same one
+                if (activeDropdownPopup != null && activeDropdownPopup.isShowing()) {
+                    boolean isThisPopup = (activeDropdownPopup == activePopup);
+                    activeDropdownPopup.dismiss();
+                    activeDropdownPopup = null;
+                    if (isThisPopup) {
+                        arrowIv.animate().rotation(0f).setDuration(200).start();
+                        return;
+                    }
                 }
 
                 LinearLayout popupLayout = new LinearLayout(ctx);
@@ -3840,7 +3856,7 @@ private void updateHeaderColors() {
     if (mMinimizeBtn != null) {
         mMinimizeBtn.setBackground(cardBg(
             withAlpha(COLOR_ACCENT, 0x1A),
-            withAlpha(COLOR_ACCENT, 0x77), 8));
+            withAlpha(COLOR_ACCENT, 0x77), 6));
         mMinimizeBtn.setTextColor(COLOR_ACCENT);
     }
 
@@ -3849,7 +3865,7 @@ private void updateHeaderColors() {
         int DANGER_BRIGHT = Color.parseColor("#FF3B30");
         mHideBtn.setBackground(cardBg(
                 withAlpha(DANGER_BRIGHT, 0x1F),
-                withAlpha(DANGER_BRIGHT, 0x99), 8));
+                withAlpha(DANGER_BRIGHT, 0x99), 6));
         mHideBtn.setTextColor(DANGER_BRIGHT);
     }
 
