@@ -240,6 +240,27 @@ private static class ToggleHolder {
 }
 private final HashMap<Integer, ToggleHolder> mToggles =
         new HashMap<Integer, ToggleHolder>();
+        
+            // ===== SeekBar tracking (for Mode sync) =====
+private static class SeekBarHolder {
+    int featNum;
+    String featName;
+    SeekBar seekBar;
+    TextView chip;
+}
+private final HashMap<Integer, SeekBarHolder> mSeekBars =
+        new HashMap<Integer, SeekBarHolder>();
+
+    // ===== Spinner tracking (for Mode sync) =====
+private static class SpinnerHolder {
+    int featNum;
+    String featName;
+    TextView nameView;
+    LinearLayout dropdownList;
+    String[] items;
+}
+private final HashMap<Integer, SpinnerHolder> mSpinners =
+        new HashMap<Integer, SpinnerHolder>();
 
     boolean stopChecking, overlayRequired;
     Context getContext;
@@ -1963,6 +1984,8 @@ new Titanic().start(proTitle);
         spinnerAdapters.clear();
         mModeButtons.clear();
         mToggles.clear();
+        mSeekBars.clear();    // ★ নতুন
+        mSpinners.clear();    
         sidebarLayout.removeAllViews();
         contentLayout.removeAllViews();
 
@@ -2887,7 +2910,8 @@ Toast.makeText(getContext, "Color: " + cname, Toast.LENGTH_SHORT).show();
         LinearLayout.LayoutParams chipLp = new LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT);
         chipLp.setMargins(0, dp(8), dp(10), 0);
         chip.setLayoutParams(chipLp);
-        chip.setText(String.valueOf(startVal));
+        int displayStart = (featNum == 103) ? (startVal + 30) : startVal;
+chip.setText(String.valueOf(displayStart));
         chip.setTextColor(Color.parseColor(NumberTxtColor));
         chip.setTypeface(fontBold);
         chip.setTextSize(11f);
@@ -2918,9 +2942,17 @@ Toast.makeText(getContext, "Color: " + cname, Toast.LENGTH_SHORT).show();
                     if (val != i) seekBar.setProgress(val);
                     Preferences.changeFeatureInt(featName, featNum, val);
 
-chip.setText(String.valueOf(val));
+int disp = (featNum == 103) ? (val + 30) : val;
+chip.setText(String.valueOf(disp));
                 }
             });
+            
+            SeekBarHolder sbHolder = new SeekBarHolder();
+        sbHolder.featNum  = featNum;
+        sbHolder.featName = featName;
+        sbHolder.seekBar  = seekBar;
+        sbHolder.chip     = chip;
+        mSeekBars.put(featNum, sbHolder);
 
         card.addView(head);
         card.addView(seekBar);
@@ -3202,66 +3234,124 @@ private void syncToggles(int[] featNums, boolean on) {
     for (int fn : featNums) setToggleState(fn, on);
 }
 
-// ================================================================
-// Mode → Toggle sync
-// ----------------------------------------------------------------
-// Feature numbers (new scheme):
-//   102 = Max Jumps            103 = Jump Height
-//   104 = Auto Revive          106 = Fast Lane
-//   107 = Score Boost          108 = God Mode
-//   110 = Unlimited Coins      130 = Low Gravity
-//   131 = No Wall              132 = No Impact
-//   133 = Freeze Player        134 = Air Jump
-//   135 = Hide Jetpack         136 = Hide Pogo
-//   137 = Hide Magnet          138 = Hide Board
-//   140 = Infinite Powerup     141 = Infinite Jetpack
-//   142 = Freeze Trains        143 = Freeze Coins
-//   144 = Freeze Score         150 = Free IAP
-//   154 = Revive Reward        160 = Player Speed
-//
-// Simple Mode  (800): 104, 110
-// Max Mode     (801): 104, 106, 107, 110
-// Ultra Max    (802): 104, 106, 107, 108, 110, 150
-// Reset        (803): সব OFF
-// ================================================================
+private void setSeekBarValue(int featNum, int value) {
+    SeekBarHolder h = mSeekBars.get(featNum);
+    if (h == null) return;
+    if (h.seekBar.getProgress() == value) return;
+    // setProgress() নিজেই onProgressChanged trigger করবে →
+    // chip ও Preferences changeFeatureInt নিজে থেকেই হবে
+    h.seekBar.setProgress(value);
+}
+
+private void setSpinnerValue(int featNum, int index) {
+    SpinnerHolder h = mSpinners.get(featNum);
+    if (h == null) return;
+    if (index < 0 || index >= h.items.length) return;
+
+    h.nameView.setText(h.featName + ": " + h.items[index]);
+
+    // Highlight আপডেট (drop-down খোলা থাকুক বা বন্ধ — দুই অবস্থাতেই)
+    for (int j = 0; j < h.dropdownList.getChildCount(); j++) {
+        View child = h.dropdownList.getChildAt(j);
+        if (child instanceof TextView) {
+            TextView t = (TextView) child;
+            if (j == index) {
+                t.setTextColor(COLOR_ACCENT);
+                t.setBackground(cardBg(withAlpha(COLOR_ACCENT, 0x1A), 0, 4));
+            } else {
+                t.setTextColor(TEXT_COLOR_2);
+                t.setBackground(null);
+            }
+        }
+    }
+
+    Preferences.changeFeatureInt(h.featName, featNum, index);
+}
+
 private void applyModeToMenu(int modeFeatNum, boolean enabled) {
     switch (modeFeatNum) {
 
         case 800: // Simple Mode
             if (enabled) {
-                syncToggles(new int[]{104, 110}, true);
-                // Force OFF conflicting advanced toggles
-                syncToggles(new int[]{106, 107, 108, 132, 150}, false);
+                syncToggles(new int[]{104, 110, 150}, true);
+                setSeekBarValue(151, 9999);   // Extra Coins
+                setSeekBarValue(103, 5);      // Jump Height → game 35
+                syncToggles(new int[]{106, 107, 108, 132, 131, 130, 142, 119,
+                                      140, 141, 134, 133, 143, 144}, false);
+                setSeekBarValue(102, 0);
+                setSeekBarValue(145, 0);
+                setSeekBarValue(152, 0);
+                setSeekBarValue(153, 0);
+                setSeekBarValue(160, 0);
             } else {
-                syncToggles(new int[]{104, 110}, false);
+                syncToggles(new int[]{104, 110, 150}, false);
+                setSeekBarValue(151, 0);
+                setSeekBarValue(103, 0);
             }
             break;
 
         case 801: // Max Mode
             if (enabled) {
-                syncToggles(new int[]{104, 106, 107, 110}, true);
-                // Force OFF others
-                syncToggles(new int[]{108, 132, 150}, false);
+                syncToggles(new int[]{104, 110, 150, 108, 106, 140}, true);
+                setSeekBarValue(151, 9999);
+                setSeekBarValue(103, 5);
+                setSeekBarValue(102, 999);
+                setSeekBarValue(145, 999);
+                syncToggles(new int[]{107, 132, 131, 130, 142, 119, 141,
+                                      134, 133, 143, 144}, false);
+                setSeekBarValue(152, 0);
+                setSeekBarValue(153, 0);
+                setSeekBarValue(160, 0);
             } else {
-                syncToggles(new int[]{106, 107}, false);
+                syncToggles(new int[]{104, 110, 150, 108, 106, 140}, false);
+                setSeekBarValue(151, 0);
+                setSeekBarValue(103, 0);
+                setSeekBarValue(102, 0);
+                setSeekBarValue(145, 0);
             }
             break;
 
-        case 802: // Ultra Max Mode — সব ON
-            if (enabled) {
-                syncToggles(new int[]{104, 106, 107, 108, 110, 150}, true);
-                // 150 triggers IAP patch via Preferences → native Changes()
-                syncToggles(new int[]{132}, false);   // No Impact OFF (God Mode covers it)
+        case 802:
+    if (enabled) {
+        syncToggles(new int[]{104, 110, 150, 108, 106, 140,
+                              130, 131, 132, 142, 119}, true);
+        setSeekBarValue(151, 9999);
+        setSeekBarValue(103, 5);
+        setSeekBarValue(102, 999);
+        setSeekBarValue(145, 999);
+        setSeekBarValue(152, 9999);
+        setSeekBarValue(153, 9999);
+        setSpinnerValue(161, 1);       // ★ SeekBar নয়, Spinner
+        syncToggles(new int[]{107, 141, 134, 133, 143, 144}, false);
+        setSeekBarValue(160, 0);
             } else {
-                syncToggles(new int[]{106, 107, 108, 150}, false);
+                syncToggles(new int[]{104, 110, 150, 108, 106, 140,
+                                      130, 131, 132, 142, 119}, false);
+                setSeekBarValue(151, 0);
+                setSeekBarValue(103, 0);
+                setSeekBarValue(102, 0);
+                setSeekBarValue(145, 0);
+                setSeekBarValue(152, 0);
+                setSeekBarValue(153, 0);
+                setSeekBarValue(161, 0);
             }
             break;
 
-        case 803: // Reset All — সব OFF
+        case 803: // Reset All
             syncToggles(new int[]{
                     104, 106, 107, 108, 110, 130, 131, 132, 133,
-                    135, 136, 137, 138, 140, 141, 142, 143, 144, 150, 154
+                    135, 136, 137, 138, 140, 141, 142, 143, 144,
+                    150, 154, 119, 121
             }, false);
+            setSeekBarValue(102, 0);
+            setSeekBarValue(103, 0);
+            setSeekBarValue(134, 0);
+            setSeekBarValue(145, 0);
+            setSeekBarValue(151, 0);
+            setSeekBarValue(152, 0);
+            setSeekBarValue(153, 0);
+            setSeekBarValue(160, 0);
+            setSeekBarValue(161, 0);
             break;
     }
 }
@@ -3329,14 +3419,13 @@ private void applyModeToMenu(int modeFeatNum, boolean enabled) {
         }
 
         tv.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                tvName.setText(featName + ": " + lists.get(index));
-                Preferences.changeFeatureInt(featName, featNum, index);
-                dropdownList.setVisibility(View.GONE);
-                arrowIv.animate().rotation(0f).setDuration(200).start();
-            }
-        });
+    @Override
+    public void onClick(View v) {
+        setSpinnerValue(featNum, index);   // ★ highlight + nameView + prefs — সব এক জায়গায়
+        dropdownList.setVisibility(View.GONE);
+        arrowIv.animate().rotation(0f).setDuration(200).start();
+    }
+});
         dropdownList.addView(tv);
     }
 
@@ -3353,6 +3442,14 @@ private void applyModeToMenu(int modeFeatNum, boolean enabled) {
             }
         }
     });
+    
+    SpinnerHolder spHolder = new SpinnerHolder();
+    spHolder.featNum      = featNum;
+    spHolder.featName     = featName;
+    spHolder.nameView     = tvName;
+    spHolder.dropdownList = dropdownList;
+    spHolder.items        = lists.toArray(new String[0]);
+    mSpinners.put(featNum, spHolder);
 
     container.addView(spinnerRow);
     container.addView(dropdownList);
