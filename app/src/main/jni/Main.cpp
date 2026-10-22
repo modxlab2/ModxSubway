@@ -467,9 +467,13 @@ static int new_get_JumpLimit(void* s) {
     if (v > 0) return v;
     return old_get_JumpLimit ? old_get_JumpLimit(s) : 0;
 }
+
+// ★ Jump Height: slider value 0 = use game default (30).
+//   slider value N > 0 = game value (N + 30).
+//   Simple Mode sets g_JumpHeight = 5 → game 35 (slider displays 35).
 static float new_get_JumpHeight(void* s) {
     int v = g_JumpHeight.load();
-    if (v > 0) return (float)v;
+    if (v > 0) return (float)(v + 30);
     return old_get_JumpHeight ? old_get_JumpHeight(s) : 0.0f;
 }
 static float new_get_LaneChangeDuration(void* s) {
@@ -828,25 +832,47 @@ void* hack_thread(void*) {
     return nullptr;
 }
 
+// ================================================================
+//  FEATURE LIST — REORDERED as requested
+// ================================================================
 jobjectArray GetFeatureList(JNIEnv* env, jobject) {
     jobjectArray ret;
     const char* features[] = {
-        // Main Tab (No extra texts under buttons, instead a single description block at the bottom)
+        // ===== MAIN TAB =====
         OBFUSCATE("800_ButtonOnOff_Simple Mode"),
         OBFUSCATE("801_ButtonOnOff_Max Mode"),
         OBFUSCATE("802_ButtonOnOff_Ultra Max Mode"),
         OBFUSCATE("803_ButtonOnOff_Reset All Features"),
-        OBFUSCATE("992_SmallTextView_<br><br><font color='#3DDB87'><b>Simple Mode</b></font> = Auto Revive + Coins<br><font color='#3DDB87'><b>Max Mode</b></font> = Simple + Lane, Jump, Score<br><font color='#3DDB87'><b>Ultra Max Mode</b></font> = Max + God, Wall Hack, Gravity"),
+        OBFUSCATE("992_SmallTextView_<br><br><font color='#3DDB87'><b>Simple Mode</b></font> = Auto Revive + Extra Coins + Unlimited Coins + Free Shipping + Jump 35<br><br><font color='#3DDB87'><b>Max Mode</b></font> = Simple + God Mode, Max Jump, Infinite Powerup, Fast Lane<br><br><font color='#3DDB87'><b>Ultra Max Mode</b></font> = Max + Chams, No Gravity, Follow Camera, Wall Hack, No Impact, Extra Score, Extra Key, Freeze Train"),
 
+        // ===== 2. SHOP =====
+        OBFUSCATE("Category_Shop"),
+        OBFUSCATE("110_Toggle_Unlimited Coins"),
+        OBFUSCATE("150_Toggle_Free Shipping"),
+        OBFUSCATE("151_SeekBar_Extra Coins_0_9999"),
+        OBFUSCATE("152_SeekBar_Extra Keys_0_9999"),
+        OBFUSCATE("153_SeekBar_Extra Score_0_9999"),
+        OBFUSCATE("154_Toggle_Revive Reward"),
+
+        // ===== 3. SAFETY =====
+        OBFUSCATE("Category_Safety"),
+        OBFUSCATE("108_Toggle_God Mode"),
+        OBFUSCATE("132_Toggle_No Impact"),
+        OBFUSCATE("131_Toggle_Wall Hack"),
+        OBFUSCATE("996_SmallTextView_⚠ Enable Wall Hack before game starts"),
+        OBFUSCATE("104_Toggle_Auto Revive"),
+
+        // ===== 4. PLAYER =====
         OBFUSCATE("Category_Player"),
         OBFUSCATE("102_SeekBar_Max Jumps_0_999"),
         OBFUSCATE("103_SeekBar_Jump Height_0_200"),
         OBFUSCATE("130_Toggle_Low Gravity"),
-        OBFUSCATE("993_SmallTextView_<font color='#8D8F99'>⚠ Use 'Follow Camera' for better view. <u>Click here</u></font>"),
+        OBFUSCATE("993_SmallTextView_<font color='#8D8F99'>⚠ Use 'Follow Camera' for better view. </font><font color='#3DDB87'><u>Click here</u></font>"),
         OBFUSCATE("133_Toggle_Freeze Player"),
         OBFUSCATE("134_SeekBar_Air Jump_0_200"),
         OBFUSCATE("160_SeekBar_Player Speed_0_200"),
 
+        // ===== 5. POWER =====
         OBFUSCATE("Category_Power"),
         OBFUSCATE("140_Toggle_Infinite Powerup"),
         OBFUSCATE("145_SeekBar_Power Duration_0_999"),
@@ -857,33 +883,22 @@ jobjectArray GetFeatureList(JNIEnv* env, jobject) {
         OBFUSCATE("137_Toggle_Hide Magnet"),
         OBFUSCATE("138_Toggle_Hide Board"),
 
+        // ===== 6. SCORE =====
         OBFUSCATE("Category_Score"),
         OBFUSCATE("107_SeekBar_Score Boost_0_999"),
         OBFUSCATE("143_Toggle_Freeze Coins"),
         OBFUSCATE("144_Toggle_Freeze Score"),
 
-        OBFUSCATE("Category_Safety"),
-        OBFUSCATE("108_Toggle_God Mode"),
-        OBFUSCATE("132_Toggle_No Impact"),
-        OBFUSCATE("131_Toggle_Wall Hack"),
-        OBFUSCATE("996_SmallTextView_⚠ Enable Wall Hack before game starts"),
-        OBFUSCATE("104_Toggle_Auto Revive"),
-
-        OBFUSCATE("Category_Shop"),
-        OBFUSCATE("110_Toggle_Unlimited Coins"),
-        OBFUSCATE("150_Toggle_Free IAP"),
-        OBFUSCATE("151_SeekBar_Extra Coins_0_9999"),
-        OBFUSCATE("152_SeekBar_Extra Keys_0_9999"),
-        OBFUSCATE("153_SeekBar_Extra Score_0_9999"),
-        OBFUSCATE("154_Toggle_Revive Reward"),
-
+        // ===== 7. CAMERA =====
         OBFUSCATE("Category_Camera"),
         OBFUSCATE("161_Spinner_Camera Mode_Normal,Follow Camera,Stop Follow Camera"),
 
+        // ===== 8. WORLD =====
         OBFUSCATE("Category_World"),
         OBFUSCATE("142_Toggle_Freeze Trains"),
 
-                        OBFUSCATE("Category_Chams"),
+        // ===== 9. CHAMS =====
+        OBFUSCATE("Category_Chams"),
         OBFUSCATE("119_Toggle_Enable Chams"),
         OBFUSCATE("126_Spinner_Shader Target_Trains Only,All Objects"),
         OBFUSCATE("125_Spinner_Color Preset_Green Blue,Neon Red,Cyan Pink"),
@@ -895,6 +910,9 @@ jobjectArray GetFeatureList(JNIEnv* env, jobject) {
     return ret;
 }
 
+// ================================================================
+//  FEATURE CHANGES — with updated MODE logic
+// ================================================================
 void Changes(JNIEnv*, jclass, jobject, jint featNum, jstring, jint value, jlong, jboolean boolean, jstring) {
     switch (featNum) {
         case 102: g_JumpLimit.store(value);        break;
@@ -930,36 +948,116 @@ void Changes(JNIEnv*, jclass, jobject, jint featNum, jstring, jint value, jlong,
         case 125: setColorPreset(value);        break;
         case 126: setShaderPreset(value);       break;
         case 121: enableRainbow = boolean;      break;
+
+        // ============================================================
+        // SIMPLE MODE (800)
+        //   Auto Revive + Extra Coins + Unlimited Coins + Free Shipping
+        //   + Jump Height 35 (internally 5, hook adds +30)
+        // ============================================================
         case 800: {
-            g_AutoRevive.store(boolean); g_UnlimitedCoins.store(boolean);
+            g_AutoRevive.store(boolean);
+            g_UnlimitedCoins.store(boolean);
+            g_UnlimitedShop.store(boolean);
+            if (boolean) {
+                applyIsIAPPatch(true);
+                g_JumpHeight.store(5);       // slider displays 35, game = 35
+                g_AddCoinsBonus.store(9999); // Extra Coins
+            } else {
+                applyIsIAPPatch(false);
+                g_JumpHeight.store(0);
+                g_AddCoinsBonus.store(0);
+            }
         } break;
+
+        // ============================================================
+        // MAX MODE (801) = Simple + God Mode + Max Jump + Infinite Powerup + Fast Lane
+        // ============================================================
         case 801: {
-            g_AutoRevive.store(boolean); g_FastLaneChange.store(boolean); g_UnlimitedCoins.store(boolean);
-            if (boolean) { g_JumpLimit.store(100); g_JumpHeight.store(50); g_PowerDuration.store(100); g_ScoreMultiplier.store(10); }
-            else { g_JumpLimit.store(0); g_JumpHeight.store(0); g_PowerDuration.store(0); g_ScoreMultiplier.store(0); }
+            g_AutoRevive.store(boolean);
+            g_UnlimitedCoins.store(boolean);
+            g_UnlimitedShop.store(boolean);
+            g_NoCollision.store(boolean);
+            g_FastLaneChange.store(boolean);
+            g_UnlimitedPowerTime.store(boolean);
+            if (boolean) {
+                applyIsIAPPatch(true);
+                g_JumpHeight.store(5);         // game 35
+                g_AddCoinsBonus.store(9999);
+                g_JumpLimit.store(999);        // Max Jumps
+                g_PowerDuration.store(999);    // Infinite Powerup duration
+            } else {
+                applyIsIAPPatch(false);
+                g_JumpHeight.store(0);
+                g_AddCoinsBonus.store(0);
+                g_JumpLimit.store(0);
+                g_PowerDuration.store(0);
+            }
         } break;
+
+        // ============================================================
+        // ULTRA MAX MODE (802) = Max + Chams, No Gravity, Follow Camera,
+        //                        Wall Hack, No Impact, Extra Score, Extra Key, Freeze Train
+        // ============================================================
         case 802: {
-            g_AutoRevive.store(boolean); g_FastLaneChange.store(boolean);
-            g_UnlimitedCoins.store(boolean); g_NoCollision.store(boolean);
-            g_UnlimitedShop.store(boolean); applyIsIAPPatch(boolean);
+            g_AutoRevive.store(boolean);
+            g_UnlimitedCoins.store(boolean);
+            g_UnlimitedShop.store(boolean);
+            g_NoCollision.store(boolean);
+            g_FastLaneChange.store(boolean);
+            g_UnlimitedPowerTime.store(boolean);
             g_NoGravity.store(boolean);
+            g_NoWall.store(boolean);
+            g_NoImpact.store(boolean);
+            g_StopTrains.store(boolean);
+            g_ChamsEnabled = boolean;
             g_CameraMode.store(boolean ? 1 : 0);
-            if (boolean) { g_JumpLimit.store(999); g_JumpHeight.store(200); g_PowerDuration.store(999); g_ScoreMultiplier.store(999); }
-            else { g_JumpLimit.store(0); g_JumpHeight.store(0); g_PowerDuration.store(0); g_ScoreMultiplier.store(0); }
+            if (boolean) {
+                applyIsIAPPatch(true);
+                g_JumpHeight.store(5);        // game 35
+                g_AddCoinsBonus.store(9999);
+                g_JumpLimit.store(999);
+                g_PowerDuration.store(999);
+                g_AddScoreBonus.store(9999);
+                g_AddKeysBonus.store(9999);
+            } else {
+                applyIsIAPPatch(false);
+                g_JumpHeight.store(0);
+                g_AddCoinsBonus.store(0);
+                g_JumpLimit.store(0);
+                g_PowerDuration.store(0);
+                g_AddScoreBonus.store(0);
+                g_AddKeysBonus.store(0);
+            }
         } break;
+
+        // ============================================================
+        // RESET ALL (803)
+        // ============================================================
         case 803: {
             g_AutoRevive.store(false); g_FastLaneChange.store(false);
             g_UnlimitedCoins.store(false); g_NoCollision.store(false);
-            g_JumpLimit.store(0); g_JumpHeight.store(0); g_PowerDuration.store(0); g_ScoreMultiplier.store(0);
-            g_NoImpact.store(false); g_NoGravity.store(false); g_FreezeCharacter.store(false);
-            g_CharacterSpeed.store(0); g_AirJumpHeight.store(0); g_CameraMode.store(0);
-            g_NoWall.store(false); g_HideJetpack.store(false); g_HidePogostick.store(false);
-            g_HideMagnet.store(false); g_HideHoverboard.store(false); g_StopTrains.store(false);
-            g_AddCoinsBonus.store(0); g_AddKeysBonus.store(0); g_AddScoreBonus.store(0);
-            g_UnlimitedPowerTime.store(false); g_UnlimitedJetpackTime.store(false);
-            g_ReviveReward.store(false); g_FreezeCoins.store(false); g_FreezeScore.store(false);
-            if (g_UnlimitedShop.load()) { g_UnlimitedShop.store(false); applyIsIAPPatch(false); }
+            g_JumpLimit.store(0); g_JumpHeight.store(0);
+            g_PowerDuration.store(0); g_ScoreMultiplier.store(0);
+            g_NoImpact.store(false); g_NoGravity.store(false);
+            g_FreezeCharacter.store(false);
+            g_CharacterSpeed.store(0); g_AirJumpHeight.store(0);
+            g_CameraMode.store(0);
+            g_NoWall.store(false); g_HideJetpack.store(false);
+            g_HidePogostick.store(false); g_HideMagnet.store(false);
+            g_HideHoverboard.store(false); g_StopTrains.store(false);
+            g_AddCoinsBonus.store(0); g_AddKeysBonus.store(0);
+            g_AddScoreBonus.store(0);
+            g_UnlimitedPowerTime.store(false);
+            g_UnlimitedJetpackTime.store(false);
+            g_ReviveReward.store(false); g_FreezeCoins.store(false);
+            g_FreezeScore.store(false);
+            g_ChamsEnabled = false;
+            if (g_UnlimitedShop.load()) {
+                g_UnlimitedShop.store(false);
+                applyIsIAPPatch(false);
+            }
         } break;
+
         default: break;
     }
 }
