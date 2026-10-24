@@ -425,6 +425,11 @@ static void   (*old_HandleCoinsPickedUp)(void*)               = nullptr;
 static void   (*old_HandlePointsEarned)(void*)                = nullptr;
 
 // ================================================================
+//  AD REMOVE — SYBO.Ads.AdManager.HasAdAvailable
+// ================================================================
+static bool   (*old_HasAdAvailable)(void*, int)               = nullptr;
+
+// ================================================================
 //  get_IsIAP — MEMORY PATCH
 // ================================================================
 static void*             g_IsIAPAddr = nullptr;
@@ -600,6 +605,12 @@ static void new_HandleCoinsPickedUp(void* s) {
 static void new_HandlePointsEarned(void* s) {
     if (g_FreezeScore.load()) return;
     if (old_HandlePointsEarned) old_HandlePointsEarned(s);
+}
+
+// ★ AD REMOVE: always return false — no ads available
+static bool new_HasAdAvailable(void* s, int adUnit) {
+    (void)s; (void)adUnit;
+    return false;
 }
 
 // ================================================================
@@ -799,6 +810,14 @@ static void installPhase6() {
         if (C && C->thisclass) {
             DWORD o = C->GetMethodOffsetByName(OBFUSCATE("HandleOnPointsEarned"),0);
             if (o) HOOK_CHECK("GameScreenScoreCounter","HandleOnPointsEarned",o,(void*)new_HandlePointsEarned,old_HandlePointsEarned);
+        }
+    }
+    // ★ AD REMOVE — SYBO.Ads.AdManager.HasAdAvailable → always false
+    {
+        auto C = new LoadClass(OBFUSCATE("SYBO.Ads"), OBFUSCATE("AdManager"));
+        if (C && C->thisclass) {
+            DWORD o = C->GetMethodOffsetByName(OBFUSCATE("HasAdAvailable"), 1);
+            if (o) HOOK_CHECK("AdManager","HasAdAvailable",o,(void*)new_HasAdAvailable,old_HasAdAvailable);
         }
     }
 }
